@@ -34,8 +34,21 @@ NSTextField *ARLabel(NSString *text, NSFont *font, NSColor *color);
 @interface ARFlippedView : NSView
 @end
 
+// A filled, optionally outlined rounded rectangle.
+//
+// It keeps the colors as NSColor and resolves them during the view update pass,
+// because a CGColor is a snapshot: assign one outside a drawing context and the
+// shape keeps whichever appearance happened to be current, which is how cards
+// end up dark in light mode.
+@interface ARFillView : NSView
+@property (nonatomic, strong, nullable) NSColor *fillColor;
+@property (nonatomic, strong, nullable) NSColor *strokeColor;
+@property (nonatomic) CGFloat cornerRadius;
+@property (nonatomic) CGFloat borderWidth;
+@end
+
 // A rounded group of rows with hairlines between them.
-@interface ARCard : NSView
+@interface ARCard : ARFillView
 + (instancetype)cardWithRows:(NSArray<NSView *> *)rows;
 - (void)setRows:(NSArray<NSView *> *)rows;
 @end
@@ -128,7 +141,7 @@ NSTextField *ARLabel(NSString *text, NSFont *font, NSColor *color);
 @end
 
 // The banner at the top of a pane when something needs attention.
-@interface ARNoticeView : NSView
+@interface ARNoticeView : ARFillView
 - (instancetype)initWithSymbol:(NSString *)symbol
                          tint:(NSColor *)tint
                         title:(NSString *)title

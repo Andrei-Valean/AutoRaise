@@ -59,6 +59,47 @@ static void ARPin(NSView *view, NSView *container, CGFloat leading, CGFloat trai
 - (BOOL)isFlipped { return YES; }
 @end
 
+@implementation ARFillView
+
+- (instancetype)initWithFrame:(NSRect)frame {
+    if ((self = [super initWithFrame: frame])) {
+        self.translatesAutoresizingMaskIntoConstraints = NO;
+        self.wantsLayer = YES;
+    }
+    return self;
+}
+
+// AppKit runs this with the view's own appearance current, which is the only
+// place a dynamic color turns into the right CGColor.
+- (BOOL)wantsUpdateLayer { return YES; }
+
+- (void)updateLayer {
+    self.layer.cornerRadius = self.cornerRadius;
+    if (@available(macOS 10.15, *)) {
+        if (self.cornerRadius > 0) { self.layer.cornerCurve = kCACornerCurveContinuous; }
+    }
+    self.layer.backgroundColor = self.fillColor.CGColor;
+    self.layer.borderWidth = self.strokeColor ? self.borderWidth : 0;
+    self.layer.borderColor = self.strokeColor.CGColor;
+}
+
+- (void)viewDidChangeEffectiveAppearance {
+    [super viewDidChangeEffectiveAppearance];
+    self.needsDisplay = YES;
+}
+
+- (void)setFillColor:(NSColor *)fillColor {
+    _fillColor = fillColor;
+    self.needsDisplay = YES;
+}
+
+- (void)setStrokeColor:(NSColor *)strokeColor {
+    _strokeColor = strokeColor;
+    self.needsDisplay = YES;
+}
+
+@end
+
 //-------------------------------------------------- card --------------------------------------------------
 
 @implementation ARCard {
@@ -73,12 +114,10 @@ static void ARPin(NSView *view, NSView *container, CGFloat leading, CGFloat trai
 
 - (instancetype)initWithFrame:(NSRect)frame {
     if ((self = [super initWithFrame: frame])) {
-        self.translatesAutoresizingMaskIntoConstraints = NO;
-        self.wantsLayer = YES;
-        self.layer.cornerRadius = AR_CARD_RADIUS;
-        self.layer.borderWidth = 1;
-        // Corner curvature that matches the rest of the system.
-        if (@available(macOS 10.15, *)) { self.layer.cornerCurve = kCACornerCurveContinuous; }
+        self.cornerRadius = AR_CARD_RADIUS;
+        self.borderWidth = 1;
+        self.fillColor = NSColor.controlBackgroundColor;
+        self.strokeColor = [NSColor.separatorColor colorWithAlphaComponent: 0.6];
 
         _stack = [[NSStackView alloc] init];
         _stack.orientation = NSUserInterfaceLayoutOrientationVertical;
@@ -92,30 +131,16 @@ static void ARPin(NSView *view, NSView *container, CGFloat leading, CGFloat trai
             [_stack.leadingAnchor constraintEqualToAnchor: self.leadingAnchor],
             [_stack.trailingAnchor constraintEqualToAnchor: self.trailingAnchor],
         ]];
-        [self updateColors];
     }
     return self;
-}
-
-- (void)updateColors {
-    self.layer.backgroundColor = NSColor.controlBackgroundColor.CGColor;
-    self.layer.borderColor = [NSColor.separatorColor colorWithAlphaComponent: 0.6].CGColor;
-}
-
-- (void)viewDidChangeEffectiveAppearance {
-    [super viewDidChangeEffectiveAppearance];
-    // CGColor does not follow the appearance, so the layer is repainted by hand.
-    [self.effectiveAppearance performAsCurrentDrawingAppearance: ^{ [self updateColors]; }];
 }
 
 - (void)setRows:(NSArray<NSView *> *)rows {
     for (NSView *view in _stack.views.copy) { [_stack removeView: view]; }
     for (NSUInteger i = 0; i < rows.count; i++) {
         if (i > 0) {
-            NSView *separator = [[NSView alloc] init];
-            separator.wantsLayer = YES;
-            separator.layer.backgroundColor = NSColor.separatorColor.CGColor;
-            separator.translatesAutoresizingMaskIntoConstraints = NO;
+            ARFillView *separator = [[ARFillView alloc] initWithFrame: NSZeroRect];
+            separator.fillColor = NSColor.separatorColor;
             [separator.heightAnchor constraintEqualToConstant: 1].active = YES;
             [_stack addView: separator inGravity: NSStackViewGravityTop];
             // Hairlines start under the label, as they do in system windows.
@@ -455,13 +480,11 @@ static void ARPin(NSView *view, NSView *container, CGFloat leading, CGFloat trai
         scroll.borderType = NSNoBorder;
         scroll.translatesAutoresizingMaskIntoConstraints = NO;
 
-        NSView *frame = [[NSView alloc] init];
-        frame.wantsLayer = YES;
-        frame.layer.cornerRadius = 6;
-        frame.layer.borderWidth = 1;
-        frame.layer.borderColor = NSColor.separatorColor.CGColor;
-        frame.layer.backgroundColor = NSColor.textBackgroundColor.CGColor;
-        frame.translatesAutoresizingMaskIntoConstraints = NO;
+        ARFillView *frame = [[ARFillView alloc] initWithFrame: NSZeroRect];
+        frame.cornerRadius = 6;
+        frame.borderWidth = 1;
+        frame.strokeColor = NSColor.separatorColor;
+        frame.fillColor = NSColor.textBackgroundColor;
         [frame addSubview: scroll];
         [self addSubview: frame];
 
@@ -848,11 +871,8 @@ static void ARPin(NSView *view, NSView *container, CGFloat leading, CGFloat trai
                   buttonTitle:(NSString *)buttonTitle
                        action:(void (^)(void))action {
     if ((self = [super initWithFrame: NSZeroRect])) {
-        self.translatesAutoresizingMaskIntoConstraints = NO;
-        self.wantsLayer = YES;
-        self.layer.cornerRadius = AR_CARD_RADIUS;
-        if (@available(macOS 10.15, *)) { self.layer.cornerCurve = kCACornerCurveContinuous; }
-        self.layer.backgroundColor = [tint colorWithAlphaComponent: 0.12].CGColor;
+        self.cornerRadius = AR_CARD_RADIUS;
+        self.fillColor = [tint colorWithAlphaComponent: 0.12];
         _handler = action;
 
         NSImageView *icon = [NSImageView imageViewWithImage:

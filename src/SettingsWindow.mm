@@ -88,12 +88,9 @@ static NSColor *ARPageTint(ARPage page) {
 
     // A tinted rounded square with a symbol in it, the way the system settings
     // sidebar marks its sections.
-    NSView *badge = [[NSView alloc] init];
-    badge.wantsLayer = YES;
-    badge.layer.cornerRadius = 5;
-    if (@available(macOS 10.15, *)) { badge.layer.cornerCurve = kCACornerCurveContinuous; }
-    badge.layer.backgroundColor = ARPageTint((ARPage) row).CGColor;
-    badge.translatesAutoresizingMaskIntoConstraints = NO;
+    ARFillView *badge = [[ARFillView alloc] initWithFrame: NSZeroRect];
+    badge.cornerRadius = 5;
+    badge.fillColor = ARPageTint((ARPage) row);
 
     NSImage *symbol = [NSImage imageWithSystemSymbolName: @(ARPages[row].symbol)
                                 accessibilityDescription: @(ARPages[row].title)];

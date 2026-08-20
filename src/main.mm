@@ -261,6 +261,7 @@ static ARController *controller = nil;
         return;
     }
     ARConfigForgetArguments(changes.allKeys);
+    NSLog(@"Settings changed: %@", changes);
     BOOL isNewFile = _config.sourcePath == nil;
     [self reloadConfiguration];
     if (isNewFile) { [self watchConfigFile]; }
