@@ -1,0 +1,66 @@
+/*
+ * AutoRaise - Copyright (C) 2026 sbmpost
+ * Distributed under the GNU General Public License v2 or later, see LICENSE.md
+ *
+ * WindowFinder: everything that talks to the accessibility API and the window
+ * server. It answers "which window is under this point" and gathers the facts
+ * Policy decides on.
+ */
+
+#pragma once
+
+#import <AppKit/AppKit.h>
+#import <ApplicationServices/ApplicationServices.h>
+
+#import "Policy.h"
+
+NS_ASSUME_NONNULL_BEGIN
+
+// A hung application must never hang AutoRaise. Requests that take longer than
+// this are abandoned and retried on the next evaluation.
+#define AR_AX_TIMEOUT 0.2f
+
+extern "C" AXError _AXUIElementGetWindow(AXUIElementRef, CGWindowID *out);
+
+void ARWindowFinderInit(BOOL verbose);
+void ARWindowFinderRefreshDock(void);
+void ARWindowFinderSetVerbose(BOOL verbose);
+
+// YES when the window server can be asked directly which window is at a point.
+BOOL ARWindowServerHitTestAvailable(void);
+
+// The window under point, retained, or NULL. windowServerHitTest asks the
+// window server first and only falls back to walking the accessibility tree of
+// the hovered application.
+AXUIElementRef _Nullable ARCopyWindowAtPoint(CGPoint point, BOOL windowServerHitTest);
+
+// Facts for Policy. Pass the owning application element when it is already at
+// hand, otherwise it is created and released internally.
+ARWindow *ARGatherWindow(AXUIElementRef window, BOOL includeGeometry);
+
+// The focused window of the frontmost application, retained, or NULL.
+AXUIElementRef _Nullable ARCopyFocusedWindow(pid_t pid);
+BOOL ARApplicationHasMainWindow(pid_t pid);
+
+// The main (or focused) window of an application, retained, or NULL. Used by
+// the mouse warping code on task switch.
+AXUIElementRef _Nullable ARCopyActivatedWindow(pid_t pid);
+
+CGWindowID ARWindowID(AXUIElementRef window);
+CGPoint ARWarpPointForWindow(AXUIElementRef window, float warpX, float warpY);
+
+// Dock and Mission Control both take over the screen; raising underneath them
+// fights the user. Answers are cached briefly because they cost two round trips
+// to the Dock process.
+BOOL ARDockIsActive(void);
+BOOL ARMissionControlIsActive(void);
+void ARInvalidateDockCache(void);
+
+// Geometry of the display holding a point, in CoreGraphics coordinates.
+BOOL ARScreenAtPoint(CGPoint point, CGRect *frame, CGFloat *menuBarHeight);
+void ARRefreshDesktopOrigin(void);
+BOOL ARIsDesktopWindow(AXUIElementRef window);
+
+void ARLogWindowTitle(NSString *prefix, AXUIElementRef _Nullable window);
+
+NS_ASSUME_NONNULL_END

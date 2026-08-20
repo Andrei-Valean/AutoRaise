@@ -1,209 +1,171 @@
-**AutoRaise**
+# AutoRaise
 
-When you hover a window it will be raised to the front (with a delay of your choosing) and gets the focus. There is also an option to warp
-the mouse to the center of the activated window when using the cmd-tab or cmd-grave (backtick) key combination.
-See also [on stackoverflow](https://stackoverflow.com/questions/98310/focus-follows-mouse-plus-auto-raise-on-mac-os-x)
+Hover a window and it comes to the front and takes the focus, after a delay of your choosing.
+Optionally it also warps the mouse into the window you activate with cmd-tab or cmd-grave.
+See also [the stackoverflow question](https://stackoverflow.com/questions/98310/focus-follows-mouse-plus-auto-raise-on-mac-os-x)
+this started from.
 
-**Quick start**
+## Quick start
 
-1. Download the [latest release](https://github.com/sbmpost/AutoRaise/releases/latest)
-2. In Finder, double click the downloaded file to unpack.
-3. Locate the unpacked folder and double click AutoRaise.dmg
-4. Single click AutoRaise under "Locations" in Finder.
-5. Drag AutoRaise.app into the Applications folder.
-6. Open AutoRaise from Applications.
-7. Left click the balloon icon in the menu bar to give permissions to AutoRaise in System/Accessibility.
-8. Right click the balloon icon in the menu bar to set preferences.
+1. Download the [latest release](https://github.com/sbmpost/AutoRaise/releases/latest) and open the
+   disk image.
+2. Drag AutoRaise into Applications, then open it.
+3. Allow accessibility access when macOS asks. AutoRaise waits for the permission and starts the
+   moment you grant it, no restart needed.
+4. Use the menu bar icon to pause it, edit the settings, or open it at login.
 
-*Important*: When you enable Accessibility in System Preferences, if you see an older AutoRaise item with balloon icon in the
-Accessibility pane, first remove it **completely** (clicking the minus). Then stop and start AutoRaise by left clicking the balloon
-icon. The item should re-appear so that you can properly enable Accessibility.
+## Settings
 
-**Compiling AutoRaise**
+Everything is optional. AutoRaise reads `~/.AutoRaise` or `~/.config/AutoRaise/config`, then applies
+any command line arguments on top. Choose "Edit Configuration…" in the menu bar to create a
+commented starter file, and saving it applies the changes immediately.
 
-To compile AutoRaise yourself, download the master branch from [here](https://github.com/sbmpost/AutoRaise/archive/refs/heads/master.zip)
-and use the following commands:
+    # Timing
+    pollMillis=50            # how often to re-evaluate while the mouse moves
+    heartbeatMillis=500      # idle safety net, 0 disables it
+    delay=1                  # raise delay: 0 never raises, 1 raises at once, n waits (n-1) * pollMillis
+    focusDelay=0             # focus first and raise this much later, 0 disables
 
-    unzip -d ~ ~/Downloads/AutoRaise-master.zip
-    cd ~/AutoRaise-master && make clean && make && make install
-
-**Advanced compilation options**
-
-  * ALTERNATIVE_TASK_SWITCHER: The warp feature works accurately with the default OSX task switcher. Enable the alternative
-  task switcher flag if you use an alternative task switcher and are willing to accept that in some cases you may encounter
-  an unexpected mouse warp.
-
-  * OLD_ACTIVATION_METHOD: Enable this flag if one of your applications is not raising properly. This can happen if the
-  application uses a non native graphic technology like GTK or SDL. It could also be a [wine](https://www.winehq.org) application.
-  Note this will introduce a deprecation warning.
-
-  * EXPERIMENTAL_FOCUS_FIRST: Enabling this flag adds support for first focusing the hovered window before actually raising it.
-  Or not raising at all if the -delay setting equals 0. This is an experimental feature. It relies on undocumented private API
-  calls. *As such there is absolutely no guarantee it will be supported in future OSX versions*.
-
-Example advanced compilation command:
-
-    make CXXFLAGS="-DOLD_ACTIVATION_METHOD -DEXPERIMENTAL_FOCUS_FIRST" && make install
-
-**Running AutoRaise**
-
-After making the project, you end up with these two files:
-
-    AutoRaise (command line version)
-    AutoRaise.app (version without GUI)
-
-The first binary is to be used directly from the command line and accepts parameters. The second binary, AutoRaise.app, can
-be used without a terminal window and relies on the presence of a configuration file. AutoRaise.app runs on the background and
-can only be stopped via "Activity Monitor" or the AppleScript provided near the bottom of this README.
-
-**Command line usage:**
-
-    ./AutoRaise -pollMillis 50 -delay 1 -warpX 0.5 -warpY 0.1 -scale 2.5 -altTaskSwitcher false -requireMouseStop false -ignoreSpaceChanged false -ignoreApps "App1,App2" -ignoreTitles "^window$" -stayFocusedBundleIds "Id1,Id2" -disableKey control -mouseDelta 0.1
-
-*Note*: focusDelay is only supported when compiled with the "EXPERIMENTAL_FOCUS_FIRST" flag.
-
-  - pollMillis: How often to poll the mouse position and consider a raise/focus. Lower values increase responsiveness but also CPU load. Minimum = 20 and default = 50.
-
-  - delay: Raise delay, specified in units of pollMillis. Disabled if 0. A delay > 1 requires the mouse to stop for a moment before raising.
-
-  - focusDelay: Focus delay, specified in units of pollMillis. Disabled if 0. A delay > 1 requires the mouse to stop for a moment before focusing.
-
-  - warpX: A Factor between 0 and 1. Makes the mouse jump horizontally to the activated window. By default disabled.
-
-  - warpY: A Factor between 0 and 1. Makes the mouse jump vertically to the activated window. By default disabled.
-
-  - scale: Enlarge the mouse for a short period of time after warping it. The default is 2.0. To disable set it to 1.0.
-
-  - altTaskSwitcher: Set to true if you use 3rd party tools to switch between applications (other than standard command-tab).
-
-  - requireMouseStop: Require the mouse to stop moving before raise/focus. The default is true.
-
-  - ignoreSpaceChanged: Do not immediately raise/focus after a space change. The default is false.
-
-  - invertDisableKey: Makes the disable AutoRaise key behave in the opposite way. The default is false.
-
-  - invertIgnoreApps: Turns the ignoreApps parameter into an includeApps parameter. The default is false.
-
-  - ignoreApps: Comma separated list of apps for which you would like to disable focus/raise.
-
-  - ignoreTitles: Comma separated list of window titles (a title can be an ICU regular expression) for which you would like to disable focus/raise.
-
-  - stayFocusedBundleIds: Comma separated list of app bundle identifiers that shouldn't lose focus even when hovering the mouse over another window.
-
-  - disableKey: Set to control, option or disabled. This will temporarily disable AutoRaise while holding the specified key. The default is control.
-
-  - mouseDelta: Requires the mouse to move a certain distance. 0.0 = most sensitive whereas higher values decrease sensitivity.
-
-  - verbose: Set to true to make AutoRaise show a log of events when started in a terminal.
-    
-AutoRaise can read these parameters from a configuration file. To make this happen, create a **~/.AutoRaise** file or a
-**~/.config/AutoRaise/config** file. The format is as follows:
-
-    #AutoRaise config file
-    pollMillis=50
-    delay=1
-    focusDelay=0
+    # Mouse warping on cmd-tab and cmd-grave. Both factors are needed.
     warpX=0.5
     warpY=0.1
-    scale=2.5
-    altTaskSwitcher=false
-    requireMouseStop=true
-    ignoreSpaceChanged=false
-    invertDisableKey=false
-    invertIgnoreApps=false
-    ignoreApps="IntelliJ IDEA,WebStorm"
-    ignoreTitles="\\s\\| Microsoft Teams,^window$,..."
-    stayFocusedBundleIds="com.apple.SecurityAgent,..."
-    disableKey="control"
-    mouseDelta=0.1
+    scale=2.5                # briefly enlarge the cursor after warping, 1.0 disables
+    altTaskSwitcher=false    # set when you use a third party task switcher
 
-**AutoRaise.app usage:**
+    # Sensitivity
+    requireMouseStop=true    # wait for the mouse to stop before acting
+    mouseDelta=0.0           # ignore movements smaller than this
+    ignoreSpaceChanged=false # do not act right after a space change
 
-    a) setup configuration file, see above ^
-    b) open /Applications/AutoRaise.app (allow Accessibility if asked for)
-    c) either stop AutoRaise via "Activity Monitor" or read on:
+    # Suspending
+    disableKey=control       # control, option, command, shift or disabled
+    invertDisableKey=false   # hold the key to enable instead of disable
 
-To toggle AutoRaise on/off with a keyboard shortcut, paste the AppleScript below into an automator service workflow. Then
-bind the created service to a keyboard shortcut via System Preferences|Keyboard|Shortcuts. This also works for AutoRaise.app
-in which case "/Applications/AutoRaise" should be replaced with "/Applications/AutoRaise.app"
+    # Exceptions. App entries match a localized name or a bundle identifier;
+    # titles are ICU regular expressions. Escape a literal comma as \,
+    ignoreApps="IntelliJ IDEA,com.jetbrains.WebStorm"
+    ignoreTitles="^window$,\s\| Microsoft Teams"
+    invertIgnoreApps=false   # turn ignoreApps into an allow list
+    stayFocusedBundleIds="com.apple.SecurityAgent"
 
-Applescript:
+    # Behaviour that used to need recompiling
+    windowServerHitTest=true # ask the window server which window is hovered
+    legacyActivation=false   # activate the pre-10.15 way, for GTK, SDL and wine apps
 
-    on run {input, parameters}
-        tell application "Finder"
-            if exists of application process "AutoRaise" then
-                quit application "/Applications/AutoRaise"
-                display notification "AutoRaise Stopped"
-            else
-                launch application "/Applications/AutoRaise"
-                display notification "AutoRaise Started"
-            end if
-        end tell
-        return input
-    end run
+    menuBarIcon=true
+    liveReload=true
+    verbose=false
 
-**Troubleshooting & Verbose logging**
+The same names work as arguments, and `-key value` and `-key=value` are both accepted:
 
-If you experience any issues, it is suggested to first check these points:
+    ./AutoRaise -delay 2 -warpX 0.5 -warpY 0.1 -ignoreApps "Xcode"
 
-- Are you using the latest version?
-- Does it work with the command line version?
-- Are you running other mouse tools that might intervene with AutoRaise?
-- Are you running two AutoRaise instances at the same time? Use "Activity Monitor" to check this.
-- Is Accessibility properly enabled? To be absolutely sure, remove any previous AutoRaise items
-that may be present in the System Preferences|Security & Privacy|Privacy|Accessibility pane. Then
-start AutoRaise and enable accessibility again.
+Unknown settings and malformed lines are reported at startup instead of being ignored, with the line
+number. Run `./AutoRaise -help` for the full list.
 
-If after checking the above you still experience the problem, I encourage you to create an issue
-in github. It will be helpful to provide (a small part of) the verbose log, which can be enabled
-like so:
+### Focus first
 
-    ./AutoRaise <parameters you would like to add> -verbose true
+`focusDelay` focuses the hovered window without raising it, and raises it `delay` evaluations later,
+or never when `delay=0`. It works through undocumented SkyLight calls, so treat it as experimental:
+**there is no guarantee it keeps working in future macOS versions**. It used to require a separate
+build with `EXPERIMENTAL_FOCUS_FIRST`; now it is just a setting.
 
-The output should look something like this:
+### App quirks
 
-    v5.6 by sbmpost(c) 2026, usage:
+Some apps need special handling: they leave their main window untitled, they raise themselves when
+focused, or their menu bar overlay looks like a window. That knowledge lives in data rather than in
+the binary. Print the built-in list with:
 
-    AutoRaise
-      -pollMillis <20, 30, 40, 50, ...>
-      -delay <0=no-raise, 1=no-delay, 2=50ms, 3=100ms, ...>
-      -focusDelay <0=no-focus, 1=no-delay, 2=50ms, 3=100ms, ...>
-      -warpX <0.5> -warpY <0.5> -scale <2.0>
-      -altTaskSwitcher <true|false>
-      -requireMouseStop <true|false>
-      -ignoreSpaceChanged <true|false>
-      -invertDisableKey <true|false>
-      -invertIgnoreApps <true|false>
-      -ignoreApps "<App1,App2, ...>"
-      -ignoreTitles "<Regex1, Regex2, ...>"
-      -stayFocusedBundleIds "<Id1,Id2, ...>"
-      -disableKey <control|option|disabled>
-      -mouseDelta <0.1>
-      -verbose <true|false>
+    ./AutoRaise -dumpQuirks
 
-    Started with:
-      * pollMillis: 50ms
-      * delay: 0ms
-      * focusDelay: disabled
-      * ignoreSpaceChanged: false
-      * invertDisableKey: false
-      * invertIgnoreApps: false
-      * disableKey: control
-      * verbose: true
+To add to it, write `~/.config/AutoRaise/quirks.json` with the same keys. Your entries are appended
+to the built-ins, or replace them if you set `"replaceDefaults": true`. Keys starting with `//` are
+treated as comments. `quirks.json` in this repository is an empty template.
 
-    Compiled with:
-      * OLD_ACTIVATION_METHOD
-      * EXPERIMENTAL_FOCUS_FIRST
+If you work out a quirk for an app, a three line diff to the defaults is a welcome pull request.
 
-    2026-02-01 14:25:56.192 AutoRaise[44780:1615626] AXIsProcessTrusted: YES
-    2026-02-01 14:25:56.216 AutoRaise[44780:1615626] System cursor scale: 1.000000
-    2026-02-01 14:25:56.234 AutoRaise[44780:1615626] Got run loop source: YES
-    2026-02-01 14:25:56.284 AutoRaise[44780:1615626] Mouse window: AutoRaise — AutoRaise -verbose 1
-    2026-02-01 14:25:56.285 AutoRaise[44780:1615626] Focused window: AutoRaise — AutoRaise -verbose 1
-    2026-02-01 14:25:56.287 AutoRaise[44780:1615626] Desktop origin (-1920.000000, -360.000000)
-    ...
-    ...
+## Two binaries
 
-*Note*: Dimentium created a homebrew formula for this tool which can be found here:
+    AutoRaise        command line version, logs to the terminal
+    AutoRaise.app    the same program, for double clicking
 
-https://github.com/Dimentium/homebrew-autoraise
+Both read the same settings file and both show the menu bar icon. `AutoRaise.app` sets itself up as a
+login item when you ask it to, through the menu.
+
+## Troubleshooting
+
+Start with `AutoRaise -probe`. It reports which window is under the mouse, according to both the
+window server and the accessibility API, and whether AutoRaise considers it worth raising. That
+separates "AutoRaise cannot see the window" from "AutoRaise decided against it".
+
+    $ ./AutoRaise -probe
+
+    Mouse at (1451, 408)
+    Display (0, 0) 1512x982, menu bar 37
+
+    Window server hit test:
+      window 227 of Safari (pid 685, com.apple.Safari)
+      title: Example
+      frame: (0, 38) 1512x944
+      main: yes, dialog: no, floating: no, full screen: no
+      counts as a main window: yes
+
+For a running instance, turn on "Verbose Logging" in the menu, or start it with `-verbose true`.
+
+Other things worth checking:
+
+- Are you running two copies? Look for AutoRaise in Activity Monitor.
+- Is another mouse tool fighting over the same windows?
+- Does an app refuse to raise? Try `legacyActivation=true`, which helps apps built on GTK, SDL and
+  wine.
+- Does the wrong window raise? Try `windowServerHitTest=false` to use the accessibility API for hit
+  testing instead, and please report it.
+
+Accessibility permission is tied to the code signature. Signed builds keep the permission across
+updates. If you build unsigned copies yourself and macOS keeps forgetting the grant, remove the stale
+AutoRaise entry in System Settings, Privacy & Security, Accessibility with the minus button, then
+start AutoRaise again.
+
+## Building
+
+    make            # AutoRaise and AutoRaise.app
+    make test       # the decision logic, no accessibility permission needed
+    make install    # copy AutoRaise.app to /Applications
+    make icon       # redraw AutoRaise.icns from tools/make-icon.mm
+    make dmg        # package a disk image
+
+There are no compile time options left. `make` picks the best code signing certificate it can find,
+preferring a Developer ID over a development certificate over ad hoc signing; override it with
+`make CODESIGN_IDENTITY="Developer ID Application: You (TEAMID)"`. Check what it found with
+`make identity`.
+
+For a release, sign with a Developer ID and notarize:
+
+    xcrun notarytool store-credentials AutoRaise --apple-id you@example.com --team-id TEAMID --password app-specific-password
+    make notarize AR_NOTARY_PROFILE=AutoRaise
+
+## How it is put together
+
+    src/main.mm          the run loop: event tap, timers, notifications, raising
+    src/Policy.mm        which window deserves raising, as pure functions
+    src/WindowFinder.mm  the accessibility API and the window server
+    src/Config.mm        settings, from defaults through file to arguments
+    src/Quirks.mm        per app knowledge, built in and user supplied
+    src/MenuBar.mm       the status item
+    tests/               the decision logic under test
+    tools/make-icon.mm   the app icon, drawn in code
+
+`Policy.mm` never calls the accessibility API. It answers questions about facts gathered elsewhere,
+which is why `make test` can exercise every accumulated app quirk without a desktop or a permission
+prompt. Anything you change about which windows raise belongs there, with a test.
+
+AutoRaise does not poll. An event tap reports mouse movement, which arms an evaluation timer that
+stands down again once the mouse settles. Every accessibility request carries a short timeout, so an
+unresponsive app under the cursor cannot stall AutoRaise.
+
+## License
+
+GNU General Public License v2 or later, see LICENSE.md. Some pieces are based on metamove by jmgao as
+part of XFree86, and the focus-first code comes from [yabai](https://github.com/koekeishiya/yabai).
+
+Dimentium maintains a homebrew formula: https://github.com/Dimentium/homebrew-autoraise
