@@ -17,14 +17,19 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+extern BOOL ARFocusRingVerbose;
+
 @interface ARFocusRing : NSObject
 
 @property (nonatomic) ARColor color;
+@property (nonatomic) ARRingStyle style;
 @property (nonatomic, readonly) BOOL visible;
 
 // frame is the window frame in CoreGraphics coordinates, the same ones the
-// accessibility API reports.
-- (void)showAroundFrame:(CGRect)frame;
+// accessibility API reports. windowId is the window being outlined: the ring is
+// placed directly above it in the stacking order, so anything in front of that
+// window covers the ring too. Pass kCGNullWindowID to float above everything.
+- (void)showAroundFrame:(CGRect)frame ofWindow:(CGWindowID)windowId;
 - (void)hide;
 
 @end

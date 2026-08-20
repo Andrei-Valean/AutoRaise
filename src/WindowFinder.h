@@ -49,6 +49,13 @@ AXUIElementRef _Nullable ARCopyActivatedWindow(pid_t pid);
 CGWindowID ARWindowID(AXUIElementRef window);
 // The window frame in CoreGraphics coordinates.
 BOOL ARWindowFrame(AXUIElementRef window, CGRect *frame);
+
+// Frames of the ordinary windows stacked in front of the given one, in
+// CoreGraphics coordinates, front to back. AutoRaise's own windows are left
+// out. Used to clip the focus ring to the part of a window you can actually
+// see, since there is no way to place a window of ours inside another
+// application's stacking order.
+NSArray<NSValue *> *ARWindowsInFrontOf(CGWindowID windowId);
 CGPoint ARWarpPointForWindow(AXUIElementRef window, float warpX, float warpY);
 
 // Dock and Mission Control both take over the screen; raising underneath them

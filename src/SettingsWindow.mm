@@ -530,11 +530,87 @@ static ARRaiseMode ARModeForConfig(ARConfig *config) {
     if (!ringUsable) {
         [self addFootnote: @"The outline only appears when a window is focused without being "
                            "raised, so it needs one of the focus modes above."];
-    } else {
-        [self addFootnote: @"Set the colour back to the system accent by choosing it in the "
-                           "colour picker's second tab, or by putting focusRingColor=accent in "
-                           "the settings file."];
+        return;
     }
+    [self addFootnote: @"The outline is clipped to the part of the window you can actually see, "
+                       "so a window in front of it hides that part of the outline too."];
+
+    ARRingStyle style = config.focusRingStyle;
+    NSMutableArray *styleRows = [NSMutableArray array];
+
+    ARSegmentRow *placement = [[ARSegmentRow alloc] initWithTitle: @"Draw it"
+        subtitle: @"Around the window edge, or just inside it"
+        choices: @[@"Around", @"Inside"] selected: style.insideFrame ? 1 : 0];
+    placement.onChange = ^(NSInteger index) {
+        [weakSelf set: @"focusRingStyle" to: index == 1 ? @"inline" : @"outline"];
+    };
+    [styleRows addObject: placement];
+
+    ARSliderRow *thickness = [[ARSliderRow alloc] initWithTitle: @"Thickness"
+        min: 0.5 max: 10 value: style.width];
+    thickness.format = ^NSString *(double value) {
+        return [NSString stringWithFormat: @"%.1f pt", value];
+    };
+    thickness.onCommit = ^(double value) {
+        [weakSelf set: @"focusRingWidth" to: [NSString stringWithFormat: @"%.1f", value]];
+    };
+    [styleRows addObject: thickness];
+
+    ARSliderRow *glow = [[ARSliderRow alloc] initWithTitle: @"Glow"
+        min: 0 max: 24 value: style.glow];
+    glow.snapsToIntegers = YES;
+    glow.format = ^NSString *(double value) {
+        return value == 0 ? @"None" : [NSString stringWithFormat: @"%.0f pt", value];
+    };
+    glow.onCommit = ^(double value) {
+        [weakSelf set: @"focusRingGlow" to: [NSString stringWithFormat: @"%.0f", value]];
+    };
+    [styleRows addObject: glow];
+
+    ARSliderRow *corners = [[ARSliderRow alloc] initWithTitle: @"Corner radius"
+        min: 0 max: 32 value: style.radius];
+    corners.snapsToIntegers = YES;
+    corners.format = ^NSString *(double value) {
+        return value == 0 ? @"Square" : [NSString stringWithFormat: @"%.0f pt", value];
+    };
+    corners.onCommit = ^(double value) {
+        [weakSelf set: @"focusRingRadius" to: [NSString stringWithFormat: @"%.0f", value]];
+    };
+    [styleRows addObject: corners];
+
+    ARSliderRow *opacity = [[ARSliderRow alloc] initWithTitle: @"Brightness"
+        min: 10 max: 100 value: style.opacity * 100];
+    opacity.snapsToIntegers = YES;
+    opacity.format = ^NSString *(double value) {
+        return [NSString stringWithFormat: @"%.0f%%", value];
+    };
+    opacity.onCommit = ^(double value) {
+        [weakSelf set: @"focusRingOpacity" to: [NSString stringWithFormat: @"%.2f", value / 100]];
+    };
+    [styleRows addObject: opacity];
+
+    ARSliderRow *pulse = [[ARSliderRow alloc] initWithTitle: @"Pulse"
+        min: 0 max: 60 value: style.pulseSeconds * 10];
+    pulse.snapsToIntegers = YES;
+    pulse.format = ^NSString *(double tenths) {
+        return tenths == 0 ? @"Steady"
+                           : [NSString stringWithFormat: @"%.1f s per breath", tenths / 10];
+    };
+    pulse.onCommit = ^(double tenths) {
+        [weakSelf set: @"focusRingPulse" to: [NSString stringWithFormat: @"%.1f", tenths / 10]];
+    };
+    [styleRows addObject: pulse];
+
+    [self addSectionTitle: @"OUTLINE STYLE"];
+    [self addCard: styleRows];
+    for (NSView *row in styleRows) {
+        if ([row respondsToSelector: @selector(setRowEnabled:)]) {
+            [(ARRow *) row setRowEnabled: config.focusRing];
+        }
+    }
+    [self addFootnote: @"Changes show up on the next window you hover. Glow at none with a "
+                       "thickness of one gives a plain hairline; a wide glow and no pulse gives "
+                       "a steady halo."];
 }
 
 - (void)ringColorChanged:(NSColorWell *)well {

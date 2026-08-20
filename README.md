@@ -80,6 +80,12 @@ comments, ordering and any settings a future version adds are left alone.
     # Outline the window that has the keyboard but was not raised.
     focusRing=true
     focusRingColor=accent    # a hex colour such as #0A84FF, or accent
+    focusRingStyle=outline   # outline draws around the window edge, inline just inside it
+    focusRingWidth=2         # the crisp line, in points
+    focusRingGlow=7          # soft spread either side of it, 0 for a plain line
+    focusRingRadius=11       # corner radius
+    focusRingOpacity=1.0     # at its brightest
+    focusRingPulse=1.1       # seconds per breath, 0 to hold steady
 
     # Set by the window; all of these survive a restart.
     enabled=true
@@ -103,10 +109,16 @@ or never when `delay=0`. Hover a chat window, a terminal or a notes window that 
 and type into it, with the windows staying exactly where they are.
 
 Because nothing moves, a focused window is otherwise indistinguishable from an unfocused one, so
-AutoRaise draws a pulsing outline around the one holding the keyboard. `focusRingColor` takes a hex
-colour or `accent` to follow the system, and `raiseShortcut` brings the outlined window to the front
-when you do want it in front after all. The outline disappears as soon as you click, focus something
-else, or raise it.
+AutoRaise draws a pulsing outline around the one holding the keyboard, and `raiseShortcut` brings
+that window to the front when you do want it in front after all. The outline disappears as soon as
+you click, focus something else, or raise it.
+
+The outline is clipped to the part of the window you can actually see: a window in front of the
+outlined one hides that stretch of the outline too, instead of the outline being painted over it.
+It follows the window as it is moved or resized, and re-checks what is covering it four times a
+second while it is on screen. Everything about how it looks is a setting: around the edge or just
+inside it, thickness, glow, corner radius, brightness, how fast it breathes, and the colour, which
+takes a hex value or `accent` to follow the system.
 
 It works through undocumented SkyLight calls, so treat it as experimental: **there is no guarantee
 it keeps working in future macOS versions**. It used to require a separate build with

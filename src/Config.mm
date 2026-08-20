@@ -31,6 +31,12 @@ static NSString *const kLiveReload = @"liveReload";
 static NSString *const kVerbose = @"verbose";
 static NSString *const kFocusRing = @"focusRing";
 static NSString *const kFocusRingColor = @"focusRingColor";
+static NSString *const kFocusRingStyle = @"focusRingStyle";
+static NSString *const kFocusRingWidth = @"focusRingWidth";
+static NSString *const kFocusRingGlow = @"focusRingGlow";
+static NSString *const kFocusRingRadius = @"focusRingRadius";
+static NSString *const kFocusRingOpacity = @"focusRingOpacity";
+static NSString *const kFocusRingPulse = @"focusRingPulse";
 static NSString *const kRaiseShortcut = @"raiseShortcut";
 static NSString *const kEnabled = @"enabled";
 static NSString *const kToggleShortcut = @"toggleShortcut";
@@ -42,7 +48,9 @@ static NSArray<NSString *> *ARConfigKeys(void) {
              kInvertIgnoreApps, kIgnoreApps, kIgnoreTitles, kStayFocusedBundleIds,
              kDisableKey, kMouseDelta, kLegacyActivation, kWindowServerHitTest,
              kMenuBarIcon, kLiveReload, kVerbose, kEnabled, kToggleShortcut,
-             kFocusRing, kFocusRingColor, kRaiseShortcut, kConfig];
+             kFocusRing, kFocusRingColor, kFocusRingStyle, kFocusRingWidth,
+             kFocusRingGlow, kFocusRingRadius, kFocusRingOpacity, kFocusRingPulse,
+             kRaiseShortcut, kConfig];
 }
 
 @implementation ARConfig
@@ -65,6 +73,11 @@ static NSArray<NSString *> *ARConfigKeys(void) {
 }
 
 @end
+
+ARRingStyle ARRingStyleDefaults(void) {
+    ARRingStyle style = {NO, 2.0, 7.0, 11.0, 1.0, 1.1};
+    return style;
+}
 
 // Accepts "accent", "#RGB", "#RRGGBB" and "#RRGGBBAA", with or without the hash.
 ARColor ARColorParse(NSString *text, BOOL *ok) {
@@ -243,6 +256,46 @@ static BOOL ARBool(NSDictionary *values, NSString *key, BOOL fallback) {
            [value caseInsensitiveCompare: @"yes"] == NSOrderedSame;
 }
 
+// Every dimension is clamped rather than refused, so a silly number in the file
+// still leaves a ring you can see.
+static CGFloat ARClamped(NSDictionary *values, NSString *key, CGFloat fallback,
+                         CGFloat low, CGFloat high, NSMutableArray *warnings) {
+    NSString *text = values[key];
+    if (!text.length) { return fallback; }
+    CGFloat value = [text doubleValue];
+    CGFloat clamped = fmin(fmax(value, low), high);
+    if (fabs(clamped - value) > 0.0001) {
+        [warnings addObject: [NSString stringWithFormat: @"%@ %@ is outside %g to %g, using %g",
+            key, text, low, high, clamped]];
+    }
+    return clamped;
+}
+
+static ARRingStyle ARRingStyleFromValues(NSDictionary *values, NSMutableArray *warnings) {
+    ARRingStyle style = ARRingStyleDefaults();
+
+    NSString *placement = values[kFocusRingStyle];
+    if (placement.length) {
+        if ([placement caseInsensitiveCompare: @"inline"] == NSOrderedSame ||
+            [placement caseInsensitiveCompare: @"inside"] == NSOrderedSame) {
+            style.insideFrame = YES;
+        } else if ([placement caseInsensitiveCompare: @"outline"] != NSOrderedSame &&
+                   [placement caseInsensitiveCompare: @"outside"] != NSOrderedSame) {
+            [warnings addObject: [NSString stringWithFormat:
+                @"focusRingStyle \"%@\" is not outline or inline", placement]];
+        }
+    }
+
+    style.width = ARClamped(values, kFocusRingWidth, style.width, 0.5, 10, warnings);
+    style.glow = ARClamped(values, kFocusRingGlow, style.glow, 0, 24, warnings);
+    style.radius = ARClamped(values, kFocusRingRadius, style.radius, 0, 32, warnings);
+    style.opacity = ARClamped(values, kFocusRingOpacity, style.opacity, 0.1, 1, warnings);
+    // Anything under a fifth of a second reads as a flicker rather than a pulse.
+    CGFloat pulse = ARClamped(values, kFocusRingPulse, style.pulseSeconds, 0, 6, warnings);
+    style.pulseSeconds = pulse > 0 && pulse < 0.2 ? 0.2 : pulse;
+    return style;
+}
+
 ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
                              NSArray<NSString *> *warnings) {
     ARConfig *config = [[ARConfig alloc] init];
@@ -302,6 +355,7 @@ ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
     }
 
     config.focusRing = ARBool(values, kFocusRing, YES);
+    config.focusRingStyle = ARRingStyleFromValues(values, allWarnings);
     BOOL colorOk = YES;
     config.focusRingColor = ARColorParse(values[kFocusRingColor], &colorOk);
     if (!colorOk) {
@@ -462,6 +516,12 @@ NSString *ARConfigTemplate(void) {
             "# The colour is a hex value, or \"accent\" to follow the system.\n"
             "focusRing=true\n"
             "focusRingColor=accent\n"
+            "focusRingStyle=outline    # outline draws around the edge, inline inside it\n"
+            "focusRingWidth=2\n"
+            "focusRingGlow=7           # 0 for a plain line\n"
+            "focusRingRadius=11\n"
+            "focusRingOpacity=1.0\n"
+            "focusRingPulse=1.1        # seconds per breath, 0 to hold steady\n"
             "# Shortcuts, for example control-option-J. Leave out for none.\n"
             "#toggleShortcut=none\n"
             "#raiseShortcut=none\n";
@@ -490,6 +550,9 @@ NSString *ARConfigUsage(void) {
             "  -liveReload <true|false>\n"
             "  -focusRing <true|false>               outline a focused, unraised window\n"
             "  -focusRingColor <#0A84FF|accent>\n"
+            "  -focusRingStyle <outline|inline>\n"
+            "  -focusRingWidth <2> -focusRingGlow <7> -focusRingRadius <11>\n"
+            "  -focusRingOpacity <1.0> -focusRingPulse <1.1>\n"
             "  -toggleShortcut <control-option-J>    pause and resume from anywhere\n"
             "  -raiseShortcut <control-option-K>     raise the outlined window\n"
             "  -verbose <true|false>\n"

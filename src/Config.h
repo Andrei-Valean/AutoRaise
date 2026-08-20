@@ -25,6 +25,18 @@ typedef struct {
 ARColor ARColorParse(NSString *_Nullable text, BOOL *_Nullable ok);
 NSString *ARColorDescribe(ARColor color);
 
+// How the outline around a focused window is drawn.
+typedef struct {
+    BOOL insideFrame;      // inside the window edge rather than around it
+    CGFloat width;         // the crisp line, in points
+    CGFloat glow;          // soft spread either side of it, 0 for none
+    CGFloat radius;        // corner radius
+    CGFloat opacity;       // at its brightest
+    CGFloat pulseSeconds;  // one breath in and out, 0 to hold steady
+} ARRingStyle;
+
+ARRingStyle ARRingStyleDefaults(void);
+
 @interface ARConfig : NSObject
 
 // Timing. delay and focusDelay are counted in evaluations, as they always were:
@@ -63,6 +75,7 @@ NSString *ARColorDescribe(ARColor color);
 // The outline drawn around a window that has the keyboard but was not raised.
 @property (nonatomic) BOOL focusRing;
 @property (nonatomic) ARColor focusRingColor;
+@property (nonatomic) ARRingStyle focusRingStyle;
 @property (nonatomic) BOOL liveReload;
 @property (nonatomic) BOOL verbose;
 

@@ -186,6 +186,28 @@ BOOL ARWindowFrame(AXUIElementRef window, CGRect *frame) {
     return ARCopyRect(window, frame);
 }
 
+NSArray<NSValue *> *ARWindowsInFrontOf(CGWindowID windowId) {
+    NSMutableArray<NSValue *> *inFront = [NSMutableArray array];
+    if (windowId == kCGNullWindowID) { return inFront; }
+
+    NSArray *windows = (NSArray *) CFBridgingRelease(CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+    pid_t own = getpid();
+    for (NSDictionary *window in windows) {
+        // The list runs front to back, so everything before the window itself
+        // is in front of it.
+        if ([window[(__bridge id) kCGWindowNumber] unsignedIntValue] == windowId) { break; }
+        if (![window[(__bridge id) kCGWindowLayer] isEqual: @0]) { continue; }
+        if ([window[(__bridge id) kCGWindowOwnerPID] intValue] == own) { continue; }
+
+        NSDictionary *bounds = window[(__bridge id) kCGWindowBounds];
+        [inFront addObject: [NSValue valueWithRect: NSMakeRect(
+            [bounds[@"X"] doubleValue], [bounds[@"Y"] doubleValue],
+            [bounds[@"Width"] doubleValue], [bounds[@"Height"] doubleValue])]];
+    }
+    return inFront;
+}
+
 CGPoint ARWarpPointForWindow(AXUIElementRef window, float warpX, float warpY) {
     CGRect frame;
     if (!ARCopyRect(window, &frame)) { return CGPointZero; }
@@ -263,6 +285,8 @@ static AXUIElementRef _Nullable ARCopyAXWindowForID(pid_t pid, CGWindowID window
     return _match;
 }
 
+static BOOL ARListWindowAtPoint(CGPoint point, CGWindowID *windowId, pid_t *pid);
+
 // The topmost normal window at a point according to the window server, plus its
 // owner. Returns NO when the point is over the menu bar, the Dock, a screen
 // saver or anything else that is not a normal window.
@@ -290,6 +314,12 @@ static BOOL ARWindowServerWindowAtPoint(CGPoint point, CGWindowID *windowId, pid
     }
     *windowId = found;
     *pid = [info[(__bridge id) kCGWindowOwnerPID] intValue];
+    if (*pid == getpid()) {
+        // The focus ring sits at the same level as the window it outlines, so
+        // the list has to be walked instead to find what is underneath it.
+        if (verboseLogging) { NSLog(@"Window server found our own window, looking underneath"); }
+        return ARListWindowAtPoint(point, windowId, pid);
+    }
     return *pid != 0;
 #else
     (void) point; (void) windowId; (void) pid;
@@ -302,8 +332,11 @@ static BOOL ARWindowServerWindowAtPoint(CGPoint point, CGWindowID *windowId, pid
 static BOOL ARListWindowAtPoint(CGPoint point, CGWindowID *windowId, pid_t *pid) {
     NSArray *windows = (NSArray *) CFBridgingRelease(CGWindowListCopyWindowInfo(
         kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+    pid_t own = getpid();
     for (NSDictionary *window in windows) {
         if (![window[(__bridge id) kCGWindowLayer] isEqual: @0]) { continue; }
+        // Never AutoRaise's own windows: the focus ring is one of them.
+        if ([window[(__bridge id) kCGWindowOwnerPID] intValue] == own) { continue; }
         NSDictionary *bounds = window[(__bridge id) kCGWindowBounds];
         NSRect frame = NSMakeRect([bounds[@"X"] intValue], [bounds[@"Y"] intValue],
                                   [bounds[@"Width"] intValue], [bounds[@"Height"] intValue]);

@@ -613,6 +613,35 @@ static void testColors(void) {
     CHECK(config.toggleShortcut == nil);
     CHECK(config.raiseShortcut == nil);
 
+    CASE("the outline style has usable defaults");
+    ARRingStyle style = ARRingStyleDefaults();
+    CHECK(!style.insideFrame);
+    CHECK(style.width > 0);
+    CHECK(style.pulseSeconds > 0);
+    config = ARConfigFromValues(@{}, nil);
+    CHECK_EQ_INT(config.focusRingStyle.glow, style.glow);
+
+    CASE("outline and inline are both spellable");
+    CHECK(ARConfigFromValues(@{@"focusRingStyle": @"inline"}, nil).focusRingStyle.insideFrame);
+    CHECK(ARConfigFromValues(@{@"focusRingStyle": @"inside"}, nil).focusRingStyle.insideFrame);
+    CHECK(!ARConfigFromValues(@{@"focusRingStyle": @"outline"}, nil).focusRingStyle.insideFrame);
+    ARConfig *bogusStyle = ARConfigFromValues(@{@"focusRingStyle": @"sideways"}, nil);
+    CHECK(!bogusStyle.focusRingStyle.insideFrame);
+    CHECK_EQ_INT(bogusStyle.warnings.count, 1);
+
+    CASE("silly dimensions are clamped and reported, not refused");
+    ARConfig *clamped = ARConfigFromValues(@{@"focusRingWidth": @"400",
+                                             @"focusRingGlow": @"-5",
+                                             @"focusRingOpacity": @"9"}, nil);
+    CHECK_EQ_INT(clamped.focusRingStyle.width, 10);
+    CHECK_EQ_INT(clamped.focusRingStyle.glow, 0);
+    CHECK_EQ_INT(clamped.focusRingStyle.opacity, 1);
+    CHECK_EQ_INT(clamped.warnings.count, 3);
+
+    CASE("zero pulse means steady, and a flicker is slowed to a pulse");
+    CHECK_EQ_INT(ARConfigFromValues(@{@"focusRingPulse": @"0"}, nil).focusRingStyle.pulseSeconds, 0);
+    CHECK(ARConfigFromValues(@{@"focusRingPulse": @"0.01"}, nil).focusRingStyle.pulseSeconds >= 0.2);
+
     CASE("the two shortcuts are kept apart");
     config = ARConfigFromValues(@{@"toggleShortcut": @"control-option-J",
                                   @"raiseShortcut": @"control-option-K"}, nil);

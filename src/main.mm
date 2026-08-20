@@ -201,8 +201,10 @@ static ARController *controller = nil;
         else if (quirksPath) { printf("Quirks from %s\n", quirksPath.UTF8String); }
 
         ARWindowFinderInit(_config.verbose);
+        ARFocusRingVerbose = _config.verbose;
         _focusRing = [[ARFocusRing alloc] init];
         _focusRing.color = _config.focusRingColor;
+        _focusRing.style = _config.focusRingStyle;
         CGSGetCursorScale(CGSMainConnectionID(), &_systemCursorScale);
         if (_config.verbose) { NSLog(@"System cursor scale: %f", _systemCursorScale); }
 
@@ -242,8 +244,10 @@ static ARController *controller = nil;
     _config = config;
 
     ARWindowFinderSetVerbose(config.verbose);
+    ARFocusRingVerbose = config.verbose;
     _enabled = config.enabled;
     _focusRing.color = config.focusRingColor;
+    _focusRing.style = config.focusRingStyle;
     if (!config.focusRing || !config.focusFirst || !config.enabled) { [self hideFocusRing]; }
     _delay = ARResetDelay();
     if (timingChanged) { [self startTimers]; }
@@ -561,13 +565,13 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
             }
         }
     }
-    [_focusRing showAroundFrame: frame];
+    [_focusRing showAroundFrame: frame ofWindow: ARWindowID(window)];
 }
 
 - (void)followRingedWindow {
     CGRect frame = CGRectZero;
     if (_ringWindow && _focusRing.visible && ARWindowFrame(_ringWindow, &frame)) {
-        [_focusRing showAroundFrame: frame];
+        [_focusRing showAroundFrame: frame ofWindow: ARWindowID(_ringWindow)];
     }
 }
 
