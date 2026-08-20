@@ -24,10 +24,13 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#import <ServiceManagement/ServiceManagement.h>
+
 #import "Config.h"
 #import "MenuBar.h"
 #import "Policy.h"
 #import "Quirks.h"
+#import "SettingsWindow.h"
 #import "WindowFinder.h"
 
 #define AUTORAISE_VERSION "6.0"
@@ -115,7 +118,7 @@ static void window_manager_focus_window_without_raise(
 
 //------------------------------------------------controller------------------------------------------------
 
-@interface ARController : NSObject <ARMenuBarDelegate>
+@interface ARController : NSObject <ARMenuBarDelegate, ARSettingsDelegate>
 - (instancetype)initWithConfig:(ARConfig *)config;
 - (void)handleTappedEvent:(CGEventRef)event ofType:(CGEventType)type;
 - (void)windowDestroyed:(CGWindowID)windowId;
@@ -126,6 +129,7 @@ static void window_manager_focus_window_without_raise(
     ARConfig *_config;
     ARQuirks *_quirks;
     ARMenuBar *_menuBar;
+    ARSettingsWindowController *_settingsWindow;
     BOOL _enabled;
 
     // Mouse tracking. _point is fed by the event tap, so a still cursor needs no
@@ -177,7 +181,7 @@ static ARController *controller = nil;
 - (instancetype)initWithConfig:(ARConfig *)config {
     if ((self = [super init])) {
         _config = config;
-        _enabled = YES;
+        _enabled = config.enabled;
         _delay = ARResetDelay();
         _previousWindowId = kCGNullWindowID;
         _lastDestroyedWindowId = kCGNullWindowID;
@@ -228,6 +232,7 @@ static ARController *controller = nil;
     _config = config;
 
     ARWindowFinderSetVerbose(config.verbose);
+    _enabled = config.enabled;
     _delay = ARResetDelay();
     if (timingChanged) { [self startTimers]; }
     if (warpChanged) { [self registerNotifications]; }
@@ -242,6 +247,34 @@ static ARController *controller = nil;
     ARQuirks *quirks = ARQuirksLoad(quirksPath, &error);
     if (error) { NSLog(@"Ignoring %@: %@", quirksPath, error.localizedDescription); }
     else { _quirks = quirks; }
+}
+
+- (void)applySettings:(NSDictionary<NSString *, id> *)changes {
+    NSError *error = nil;
+    NSString *path = _config.sourcePath ?: ARConfigEnsurePath(&error);
+    if (!path) {
+        NSLog(@"Cannot write settings: %@", error.localizedDescription);
+        return;
+    }
+    if (!ARConfigWrite(path, changes, &error)) {
+        NSLog(@"Cannot write %@: %@", path, error.localizedDescription);
+        return;
+    }
+    ARConfigForgetArguments(changes.allKeys);
+    BOOL isNewFile = _config.sourcePath == nil;
+    [self reloadConfiguration];
+    if (isNewFile) { [self watchConfigFile]; }
+}
+
+- (void)resetAllSettings {
+    NSString *path = _config.sourcePath ?: ARConfigEnsurePath(nil);
+    NSError *error = nil;
+    if (path && ![ARConfigTemplate() writeToFile: path atomically: YES
+            encoding: NSUTF8StringEncoding error: &error]) {
+        NSLog(@"Cannot reset %@: %@", path, error.localizedDescription);
+        return;
+    }
+    [self reloadConfiguration];
 }
 
 - (void)reloadConfiguration {
@@ -423,6 +456,8 @@ static CGEventRef ARTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
         [self onAppActivated];
     }
 
+    if (type == kCGEventKeyDown && [self handleToggleShortcut: event]) { return; }
+
     if (type == kCGEventKeyDown) {
         CGKeyCode keycode = (CGKeyCode) CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
         if (keycode == kVK_Tab) {
@@ -431,6 +466,22 @@ static CGEventRef ARTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
             commandGravePressed = commandGravePressed || commandPressed;
         }
     }
+}
+
+- (BOOL)handleToggleShortcut:(CGEventRef)event {
+    if (!_config.toggleShortcut.length) { return NO; }
+    ARShortcut shortcut = ARShortcutParse(_config.toggleShortcut);
+    if (!shortcut.valid) { return NO; }
+
+    CGKeyCode keyCode = (CGKeyCode) CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
+    if (keyCode != shortcut.keyCode) { return NO; }
+
+    CGEventFlags mask = kCGEventFlagMaskControl | kCGEventFlagMaskAlternate |
+                        kCGEventFlagMaskShift | kCGEventFlagMaskCommand;
+    if ((CGEventGetFlags(event) & mask) != shortcut.modifiers) { return NO; }
+
+    [self setAutoRaiseEnabled: !_enabled];
+    return YES;
 }
 
 //---------------------------------------------- notifications ---------------------------------------------
@@ -866,16 +917,85 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
     _delay = ARResetDelay();
     if (enabled) { [self wakeUp]; } else { [_fastTimer invalidate]; _fastTimer = nil; }
     NSLog(@"AutoRaise %@", enabled ? @"enabled" : @"disabled");
-}
-
-- (BOOL)verboseLogging { return _config.verbose; }
-
-- (void)setVerboseLogging:(BOOL)verbose {
-    _config.verbose = verbose;
-    ARWindowFinderSetVerbose(verbose);
+    [self applySettings: @{@"enabled": enabled ? @"true" : @"false"}];
+    [_menuBar refresh];
 }
 
 - (BOOL)accessibilityGranted { return AXIsProcessTrusted(); }
+
+- (void)requestAccessibility {
+    // Asking again brings up the pane with AutoRaise already listed.
+    NSDictionary *options = @{(id) CFBridgingRelease(kAXTrustedCheckOptionPrompt): @YES};
+    AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef) options);
+    [[NSWorkspace sharedWorkspace] openURL: [NSURL URLWithString:
+        @"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]];
+}
+
+- (ARConfig *)currentConfig { return _config; }
+
+- (NSString *)settingsFilePath { return _config.sourcePath; }
+
+- (BOOL)loginItemAvailable {
+    if (@available(macOS 13.0, *)) {
+        // Registering only means anything for a real bundle.
+        return NSBundle.mainBundle.bundleIdentifier != nil;
+    }
+    return NO;
+}
+
+- (BOOL)loginItemEnabled {
+    if (@available(macOS 13.0, *)) {
+        return SMAppService.mainAppService.status == SMAppServiceStatusEnabled;
+    }
+    return NO;
+}
+
+- (void)setLoginItemEnabled:(BOOL)enabled {
+    if (@available(macOS 13.0, *)) {
+        NSError *error = nil;
+        BOOL ok = enabled ? [SMAppService.mainAppService registerAndReturnError: &error]
+                          : [SMAppService.mainAppService unregisterAndReturnError: &error];
+        if (ok) { return; }
+        NSLog(@"Could not change the login item: %@", error.localizedDescription);
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"Could not change the login item";
+        alert.informativeText = error.localizedDescription ?:
+            @"Move AutoRaise to the Applications folder and try again.";
+        [alert runModal];
+    }
+}
+
+- (void)openSettings {
+    if (!_settingsWindow) {
+        _settingsWindow = [[ARSettingsWindowController alloc] initWithDelegate: self];
+    } else {
+        [_settingsWindow rebuild];
+    }
+    // A window deserves a dock icon and a menu bar while it is open, so that
+    // copy and paste in the text fields behave the way people expect.
+    [NSApp setActivationPolicy: NSApplicationActivationPolicyRegular];
+    [_settingsWindow show];
+}
+
+- (NSString *)diagnosticsReport {
+    NSProcessInfo *process = [NSProcessInfo processInfo];
+    NSMutableString *report = [NSMutableString string];
+    [report appendFormat: @"AutoRaise %s\n", AUTORAISE_VERSION];
+    [report appendFormat: @"macOS %@\n", process.operatingSystemVersionString];
+    [report appendFormat: @"Accessibility: %@\n", AXIsProcessTrusted() ? @"granted" : @"not granted"];
+    [report appendFormat: @"SkyLight: %@\n",
+        ARWindowServerHitTestAvailable() ? @"available" : @"missing"];
+    [report appendFormat: @"Hit test: %@\n",
+        _config.windowServerHitTest ? @"window server" : @"accessibility"];
+    [report appendFormat: @"Delay: %d ticks, focus delay: %d ticks, poll %dms\n",
+        _config.delayTicks, _config.focusDelayTicks, _config.pollMillis];
+    [report appendFormat: @"Focus first: %@\n", _config.focusFirst ? @"yes" : @"no"];
+    [report appendFormat: @"Settings: %@\n", _config.sourcePath ?: @"defaults only"];
+    [report appendFormat: @"Quirks: %@\n", ARQuirksUserFilePath() ?: @"built in only"];
+    [report appendFormat: @"Bundle: %@\n", NSBundle.mainBundle.bundleIdentifier ?: @"command line"];
+    for (NSString *warning in _config.warnings) { [report appendFormat: @"Warning: %@\n", warning]; }
+    return report;
+}
 
 - (NSString *)statusSummary {
     if (!AXIsProcessTrusted()) { return @"Accessibility access needed"; }
@@ -885,26 +1005,6 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
     NSString *action = _config.focusFirst ? @"Focusing" : @"Raising";
     if (!millis) { return [NSString stringWithFormat: @"%@ immediately", action]; }
     return [NSString stringWithFormat: @"%@ after %dms", action, millis];
-}
-
-- (NSString *)configurationPath {
-    NSString *path = _config.sourcePath;
-    if (path) { return path; }
-
-    // No settings file yet: write the commented template so there is something
-    // to edit, then start watching it.
-    path = ARConfigPreferredPath();
-    NSError *error = nil;
-    [[NSFileManager defaultManager] createDirectoryAtPath: path.stringByDeletingLastPathComponent
-        withIntermediateDirectories: YES attributes: nil error: &error];
-    if (![ARConfigTemplate() writeToFile: path atomically: YES
-            encoding: NSUTF8StringEncoding error: &error]) {
-        NSLog(@"Could not create %@: %@", path, error.localizedDescription);
-        return nil;
-    }
-    _config.sourcePath = path;
-    [self watchConfigFile];
-    return path;
 }
 
 @end
@@ -974,11 +1074,58 @@ static void ARProbe(void) {
     printf("\n");
 }
 
+static NSMenu *ARBuildMainMenu(void) {
+    NSMenu *mainMenu = [[NSMenu alloc] init];
+
+    NSMenuItem *appItem = [[NSMenuItem alloc] init];
+    NSMenu *appMenu = [[NSMenu alloc] init];
+    [appMenu addItemWithTitle: @"About AutoRaise" action: @selector(orderFrontStandardAboutPanel:)
+        keyEquivalent: @""];
+    [appMenu addItem: [NSMenuItem separatorItem]];
+    [appMenu addItemWithTitle: @"Settings…" action: @selector(openSettings) keyEquivalent: @","];
+    [appMenu addItem: [NSMenuItem separatorItem]];
+    [appMenu addItemWithTitle: @"Hide AutoRaise" action: @selector(hide:) keyEquivalent: @"h"];
+    [appMenu addItemWithTitle: @"Quit AutoRaise" action: @selector(terminate:) keyEquivalent: @"q"];
+    appItem.submenu = appMenu;
+    [mainMenu addItem: appItem];
+
+    NSMenuItem *editItem = [[NSMenuItem alloc] init];
+    NSMenu *editMenu = [[NSMenu alloc] initWithTitle: @"Edit"];
+    [editMenu addItemWithTitle: @"Undo" action: @selector(undo:) keyEquivalent: @"z"];
+    [[editMenu addItemWithTitle: @"Redo" action: @selector(redo:) keyEquivalent: @"z"]
+        setKeyEquivalentModifierMask: NSEventModifierFlagCommand | NSEventModifierFlagShift];
+    [editMenu addItem: [NSMenuItem separatorItem]];
+    [editMenu addItemWithTitle: @"Cut" action: @selector(cut:) keyEquivalent: @"x"];
+    [editMenu addItemWithTitle: @"Copy" action: @selector(copy:) keyEquivalent: @"c"];
+    [editMenu addItemWithTitle: @"Paste" action: @selector(paste:) keyEquivalent: @"v"];
+    [editMenu addItemWithTitle: @"Select All" action: @selector(selectAll:) keyEquivalent: @"a"];
+    editItem.submenu = editMenu;
+    [mainMenu addItem: editItem];
+
+    NSMenuItem *windowItem = [[NSMenuItem alloc] init];
+    NSMenu *windowMenu = [[NSMenu alloc] initWithTitle: @"Window"];
+    [windowMenu addItemWithTitle: @"Close" action: @selector(performClose:) keyEquivalent: @"w"];
+    [windowMenu addItemWithTitle: @"Minimize" action: @selector(performMiniaturize:)
+        keyEquivalent: @"m"];
+    windowItem.submenu = windowMenu;
+    [mainMenu addItem: windowItem];
+
+    return mainMenu;
+}
+
 @interface ARAppDelegate : NSObject <NSApplicationDelegate>
 @end
 
 @implementation ARAppDelegate
 - (void)applicationWillTerminate:(NSNotification *)notification { [controller shutDown]; }
+
+// Reopening from the dock, while a settings window has put us there.
+- (BOOL)applicationShouldHandleReopen:(NSApplication *)app hasVisibleWindows:(BOOL)visible {
+    if (!visible) { [controller openSettings]; }
+    return YES;
+}
+
+- (void)openSettings { [controller openSettings]; }
 @end
 
 int main(int argc, const char *argv[]) {
@@ -1026,6 +1173,7 @@ int main(int argc, const char *argv[]) {
         [app setActivationPolicy: NSApplicationActivationPolicyAccessory];
         ARAppDelegate *delegate = [[ARAppDelegate alloc] init];
         app.delegate = delegate;
+        app.mainMenu = ARBuildMainMenu();
 
         ARController *instance = [[ARController alloc] initWithConfig: config];
         (void) instance;

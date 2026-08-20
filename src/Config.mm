@@ -29,6 +29,8 @@ static NSString *const kWindowServerHitTest = @"windowServerHitTest";
 static NSString *const kMenuBarIcon = @"menuBarIcon";
 static NSString *const kLiveReload = @"liveReload";
 static NSString *const kVerbose = @"verbose";
+static NSString *const kEnabled = @"enabled";
+static NSString *const kToggleShortcut = @"toggleShortcut";
 static NSString *const kConfig = @"config";
 
 static NSArray<NSString *> *ARConfigKeys(void) {
@@ -36,7 +38,7 @@ static NSArray<NSString *> *ARConfigKeys(void) {
              kAltTaskSwitcher, kRequireMouseStop, kIgnoreSpaceChanged, kInvertDisableKey,
              kInvertIgnoreApps, kIgnoreApps, kIgnoreTitles, kStayFocusedBundleIds,
              kDisableKey, kMouseDelta, kLegacyActivation, kWindowServerHitTest,
-             kMenuBarIcon, kLiveReload, kVerbose, kConfig];
+             kMenuBarIcon, kLiveReload, kVerbose, kEnabled, kToggleShortcut, kConfig];
 }
 
 @implementation ARConfig
@@ -225,6 +227,18 @@ ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
     config.menuBarIcon = ARBool(values, kMenuBarIcon, YES);
     config.liveReload = ARBool(values, kLiveReload, YES);
     config.verbose = ARBool(values, kVerbose, NO);
+    config.enabled = ARBool(values, kEnabled, YES);
+
+    NSString *shortcut = values[kToggleShortcut];
+    if (shortcut.length && ![shortcut isEqualToString: @"none"]) {
+        ARShortcut parsed = ARShortcutParse(shortcut);
+        if (parsed.valid) {
+            config.toggleShortcut = ARShortcutDescribe(parsed);
+        } else {
+            [allWarnings addObject: [NSString stringWithFormat:
+                @"toggleShortcut \"%@\" is not a shortcut, for example control-option-A", shortcut]];
+        }
+    }
 
     config.mouseDelta = [values[kMouseDelta] floatValue];
     if (config.mouseDelta < 0) { config.mouseDelta = 0; }
@@ -309,6 +323,13 @@ ARConfig *ARConfigLoad(int argc, const char *argv[]) {
     ARConfig *config = ARConfigBuild(path, arguments, warnings);
     if (arguments[kConfig]) { config.sourcePath = path; }
     return config;
+}
+
+void ARConfigForgetArguments(NSArray<NSString *> *keys) {
+    if (!ARStartupArguments.count) { return; }
+    NSMutableDictionary *remaining = [ARStartupArguments mutableCopy];
+    [remaining removeObjectsForKeys: keys];
+    ARStartupArguments = [remaining copy];
 }
 
 ARConfig *ARConfigReload(ARConfig *previous) {
@@ -434,4 +455,73 @@ NSString *ARConfigSummary(ARConfig *config) {
         config.verbose ? "true" : "false"];
     for (NSString *warning in config.warnings) { [out appendFormat: @"  ! %@\n", warning]; }
     return out;
+}
+
+//---------------------------------------------- writing ---------------------------------------------------
+
+NSString *ARConfigEnsurePath(NSError **error) {
+    NSString *path = ARConfigExistingPath();
+    if (path) { return path; }
+
+    path = ARConfigPreferredPath();
+    NSFileManager *files = [NSFileManager defaultManager];
+    if (![files createDirectoryAtPath: path.stringByDeletingLastPathComponent
+            withIntermediateDirectories: YES attributes: nil error: error]) {
+        return nil;
+    }
+    if (![ARConfigTemplate() writeToFile: path atomically: YES
+            encoding: NSUTF8StringEncoding error: error]) {
+        return nil;
+    }
+    return path;
+}
+
+// Rewrites only the lines it has to. Hand written comments, ordering and
+// settings this build does not know about all survive.
+BOOL ARConfigWrite(NSString *path, NSDictionary<NSString *, id> *changes, NSError **error) {
+    NSCharacterSet *space = [NSCharacterSet whitespaceCharacterSet];
+    NSString *contents = [NSString stringWithContentsOfFile: path
+        encoding: NSUTF8StringEncoding error: nil] ?: ARConfigTemplate();
+
+    NSMutableArray<NSString *> *lines =
+        [[contents componentsSeparatedByString: @"\n"] mutableCopy];
+    NSMutableSet<NSString *> *handled = [NSMutableSet set];
+
+    for (NSUInteger i = 0; i < lines.count; i++) {
+        NSString *line = [lines[i] stringByTrimmingCharactersInSet: space];
+        if (!line.length || [line hasPrefix: @"#"]) { continue; }
+        NSRange separator = [line rangeOfString: @"="];
+        if (separator.location == NSNotFound) { continue; }
+
+        NSString *key = [[line substringToIndex: separator.location] stringByTrimmingCharactersInSet: space];
+        id value = changes[key];
+        if (!value || [handled containsObject: key]) { continue; }
+
+        [handled addObject: key];
+        if ([value isKindOfClass: [NSNull class]]) {
+            [lines removeObjectAtIndex: i--];
+        } else {
+            lines[i] = [NSString stringWithFormat: @"%@=%@", key, value];
+        }
+    }
+
+    NSMutableArray<NSString *> *added = [NSMutableArray array];
+    for (NSString *key in changes) {
+        if ([handled containsObject: key]) { continue; }
+        if ([changes[key] isKindOfClass: [NSNull class]]) { continue; }
+        [added addObject: [NSString stringWithFormat: @"%@=%@", key, changes[key]]];
+    }
+    if (added.count) {
+        // Sorted, so a file the settings window has grown stays readable.
+        [added sortUsingSelector: @selector(compare:)];
+        while (lines.count && ![lines.lastObject stringByTrimmingCharactersInSet: space].length) {
+            [lines removeLastObject];
+        }
+        [lines addObject: @""];
+        [lines addObjectsFromArray: added];
+    }
+
+    NSString *result = [lines componentsJoinedByString: @"\n"];
+    if (![result hasSuffix: @"\n"]) { result = [result stringByAppendingString: @"\n"]; }
+    return [result writeToFile: path atomically: YES encoding: NSUTF8StringEncoding error: error];
 }

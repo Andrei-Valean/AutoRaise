@@ -43,6 +43,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) BOOL windowServerHitTest;
 
 @property (nonatomic) BOOL menuBarIcon;
+// Whether raising is switched on at all, so pausing survives a restart.
+@property (nonatomic) BOOL enabled;
+// Global shortcut that toggles the above, "control-option-A" style, or nil.
+@property (nonatomic, copy, nullable) NSString *toggleShortcut;
 @property (nonatomic) BOOL liveReload;
 @property (nonatomic) BOOL verbose;
 
@@ -70,8 +74,25 @@ ARConfig *ARConfigLoad(int argc, const char *_Nonnull argv[_Nullable]);
 // Re-read the same source, for live reload.
 ARConfig *ARConfigReload(ARConfig *previous);
 
+// Command line arguments override the file, which would quietly defeat the
+// settings window. Changing one of those settings on purpose drops the
+// argument, so the file wins from then on.
+void ARConfigForgetArguments(NSArray<NSString *> *keys);
+
 ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
                              NSArray<NSString *> *_Nullable warnings);
+
+// A shortcut as stored in the settings file: modifier words and a key name
+// joined by "-", for instance "control-option-A" or "command-shift-F5".
+typedef struct {
+    BOOL valid;
+    unsigned short keyCode;
+    CGEventFlags modifiers;
+} ARShortcut;
+
+ARShortcut ARShortcutParse(NSString *_Nullable text);
+NSString *_Nullable ARShortcutDescribe(ARShortcut shortcut);   // for the settings file
+NSString *ARShortcutDisplay(ARShortcut shortcut);              // ⌃⌥A, for the interface
 
 // Parsers, separated out so tests can hit the awkward cases.
 NSDictionary<NSString *, NSString *> *ARConfigParseFile(NSString *contents,
@@ -79,6 +100,14 @@ NSDictionary<NSString *, NSString *> *ARConfigParseFile(NSString *contents,
 NSDictionary<NSString *, NSString *> *ARConfigParseArguments(int argc, const char *_Nonnull argv[_Nullable],
                                                              NSMutableArray<NSString *> *_Nullable warnings);
 NSArray<NSString *> *ARSplitList(NSString *_Nullable value, BOOL trimEntries);
+
+// Updates settings in place: the line for each key is replaced, added, or with
+// NSNull removed, and everything else in the file including comments is left
+// alone. Creates the file from the template when it does not exist yet.
+BOOL ARConfigWrite(NSString *path, NSDictionary<NSString *, id> *changes, NSError *_Nullable *_Nullable error);
+
+// The settings file, created from the template if there is none yet.
+NSString *_Nullable ARConfigEnsurePath(NSError *_Nullable *_Nullable error);
 
 NSString *_Nullable ARConfigExistingPath(void);   // file AutoRaise would read
 NSString *ARConfigPreferredPath(void);            // where to create one

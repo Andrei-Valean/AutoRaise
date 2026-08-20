@@ -18,12 +18,13 @@ NS_ASSUME_NONNULL_BEGIN
 @protocol ARMenuBarDelegate <NSObject>
 - (BOOL)autoRaiseEnabled;
 - (void)setAutoRaiseEnabled:(BOOL)enabled;
-- (BOOL)verboseLogging;
-- (void)setVerboseLogging:(BOOL)verbose;
-- (void)reloadConfiguration;
 - (NSString *)statusSummary;         // one line, shown greyed out at the top
 - (BOOL)accessibilityGranted;
-- (NSString *)configurationPath;     // created from a template when missing
+- (void)requestAccessibility;
+- (void)openSettings;
+- (BOOL)loginItemAvailable;
+- (BOOL)loginItemEnabled;
+- (void)setLoginItemEnabled:(BOOL)enabled;
 @end
 
 @interface ARMenuBar : NSObject

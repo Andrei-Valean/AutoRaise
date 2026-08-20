@@ -4,9 +4,6 @@
  */
 
 #import "MenuBar.h"
-#import "Config.h"
-
-#import <ServiceManagement/ServiceManagement.h>
 
 @interface ARMenuBar () <NSMenuDelegate>
 @property (nonatomic, weak) id<ARMenuBarDelegate> delegate;
@@ -67,21 +64,6 @@
     }
 }
 
-- (BOOL)loginItemAvailable {
-    if (@available(macOS 13.0, *)) {
-        // Registering only means something for a real bundle.
-        return NSBundle.mainBundle.bundleIdentifier != nil;
-    }
-    return NO;
-}
-
-- (BOOL)loginItemEnabled {
-    if (@available(macOS 13.0, *)) {
-        return SMAppService.mainAppService.status == SMAppServiceStatusEnabled;
-    }
-    return NO;
-}
-
 - (void)menuNeedsUpdate:(NSMenu *)menu {
     [menu removeAllItems];
     id<ARMenuBarDelegate> delegate = self.delegate;
@@ -92,7 +74,6 @@
     [menu addItem: status];
 
     if (!delegate.accessibilityGranted) {
-        [menu addItem: [NSMenuItem separatorItem]];
         NSMenuItem *grant = [[NSMenuItem alloc] initWithTitle: @"Grant Accessibility Access…"
             action: @selector(openAccessibilitySettings:) keyEquivalent: @""];
         grant.target = self;
@@ -107,32 +88,20 @@
     enabled.state = delegate.autoRaiseEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     [menu addItem: enabled];
 
-    if (self.loginItemAvailable) {
+    if (delegate.loginItemAvailable) {
         NSMenuItem *login = [[NSMenuItem alloc] initWithTitle: @"Open at Login"
             action: @selector(toggleLoginItem:) keyEquivalent: @""];
         login.target = self;
-        login.state = self.loginItemEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+        login.state = delegate.loginItemEnabled ? NSControlStateValueOn : NSControlStateValueOff;
         [menu addItem: login];
     }
 
     [menu addItem: [NSMenuItem separatorItem]];
 
-    NSMenuItem *edit = [[NSMenuItem alloc] initWithTitle: @"Edit Configuration…"
-        action: @selector(editConfiguration:) keyEquivalent: @""];
-    edit.target = self;
-    [menu addItem: edit];
-
-    NSMenuItem *reload = [[NSMenuItem alloc] initWithTitle: @"Reload Configuration"
-        action: @selector(reloadConfiguration:) keyEquivalent: @"r"];
-    reload.target = self;
-    [menu addItem: reload];
-
-    NSMenuItem *verbose = [[NSMenuItem alloc] initWithTitle: @"Verbose Logging"
-        action: @selector(toggleVerbose:) keyEquivalent: @""];
-    verbose.target = self;
-    verbose.state = delegate.verboseLogging ? NSControlStateValueOn : NSControlStateValueOff;
-    verbose.toolTip = @"Log every decision to the system log: log stream --process AutoRaise";
-    [menu addItem: verbose];
+    NSMenuItem *settings = [[NSMenuItem alloc] initWithTitle: @"Settings…"
+        action: @selector(openSettings:) keyEquivalent: @","];
+    settings.target = self;
+    [menu addItem: settings];
 
     [menu addItem: [NSMenuItem separatorItem]];
 
@@ -154,41 +123,16 @@
     [self refresh];
 }
 
-- (void)toggleVerbose:(id)sender {
-    [self.delegate setVerboseLogging: !self.delegate.verboseLogging];
-}
-
 - (void)toggleLoginItem:(id)sender {
-    if (@available(macOS 13.0, *)) {
-        NSError *error = nil;
-        BOOL ok = self.loginItemEnabled
-            ? [SMAppService.mainAppService unregisterAndReturnError: &error]
-            : [SMAppService.mainAppService registerAndReturnError: &error];
-        if (!ok) {
-            NSLog(@"Could not change the login item: %@", error.localizedDescription);
-            NSAlert *alert = [[NSAlert alloc] init];
-            alert.messageText = @"Could not change the login item";
-            alert.informativeText = error.localizedDescription ?:
-                @"Move AutoRaise.app to /Applications and try again.";
-            [alert runModal];
-        }
-    }
+    [self.delegate setLoginItemEnabled: !self.delegate.loginItemEnabled];
 }
 
-- (void)editConfiguration:(id)sender {
-    NSString *path = self.delegate.configurationPath;
-    if (path) { [[NSWorkspace sharedWorkspace] openURL: [NSURL fileURLWithPath: path]]; }
-}
-
-- (void)reloadConfiguration:(id)sender {
-    [self.delegate reloadConfiguration];
-    [self refresh];
+- (void)openSettings:(id)sender {
+    [self.delegate openSettings];
 }
 
 - (void)openAccessibilitySettings:(id)sender {
-    NSURL *url = [NSURL URLWithString:
-        @"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
-    [[NSWorkspace sharedWorkspace] openURL: url];
+    [self.delegate requestAccessibility];
 }
 
 - (void)quit:(id)sender {

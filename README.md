@@ -12,13 +12,33 @@ this started from.
 2. Drag AutoRaise into Applications, then open it.
 3. Allow accessibility access when macOS asks. AutoRaise waits for the permission and starts the
    moment you grant it, no restart needed.
-4. Use the menu bar icon to pause it, edit the settings, or open it at login.
+4. Use the menu bar icon to pause it, open Settings, or have it open at login.
 
 ## Settings
 
-Everything is optional. AutoRaise reads `~/.AutoRaise` or `~/.config/AutoRaise/config`, then applies
-any command line arguments on top. Choose "Edit Configuration…" in the menu bar to create a
-commented starter file, and saving it applies the changes immediately.
+Open the menu bar icon and choose Settings, or press command-comma. Every change applies
+immediately, and is written to the settings file as you make it.
+
+The window has six pages:
+
+- **General**: the master switch, open at login, the menu bar icon, and a global shortcut to pause
+  and resume from anywhere.
+- **Raise & Focus**: whether a hovered window is raised, focused first and raised later, or only
+  focused, plus the delays for each and how much pointer movement to ignore.
+- **Pointer**: mouse warping on window switch. Drag the pointer around a small window to say where
+  it should land.
+- **Exceptions**: apps and window titles to leave alone, apps that keep the focus, and the modifier
+  key that suspends AutoRaise while held. "Choose Application…" fills in names for you.
+- **Advanced**: hit testing, activation method, timing, live reload, verbose logging, a diagnostics
+  report to paste into bug reports, and reset.
+- **About**: version, links, and what this installation is actually doing.
+
+### The settings file
+
+The window is a front end for a plain text file, so both work and neither wins. AutoRaise reads
+`~/.AutoRaise` or `~/.config/AutoRaise/config`, then applies any command line arguments on top.
+Editing the file applies immediately too, and the window only rewrites the lines it has to: your
+comments, ordering and any settings a future version adds are left alone.
 
     # Timing
     pollMillis=50            # how often to re-evaluate while the mouse moves
@@ -56,12 +76,19 @@ commented starter file, and saving it applies the changes immediately.
     liveReload=true
     verbose=false
 
+    # Set by the window; both survive a restart.
+    enabled=true
+    toggleShortcut=control-option-J   # pause and resume from anywhere
+
 The same names work as arguments, and `-key value` and `-key=value` are both accepted:
 
     ./AutoRaise -delay 2 -warpX 0.5 -warpY 0.1 -ignoreApps "Xcode"
 
 Unknown settings and malformed lines are reported at startup instead of being ignored, with the line
 number. Run `./AutoRaise -help` for the full list.
+
+Arguments beat the file, which would otherwise make a setting in the window look broken. Changing
+that setting in the window drops the argument, so the window always wins from then on.
 
 ### Focus first
 
@@ -89,8 +116,8 @@ If you work out a quirk for an app, a three line diff to the defaults is a welco
     AutoRaise        command line version, logs to the terminal
     AutoRaise.app    the same program, for double clicking
 
-Both read the same settings file and both show the menu bar icon. `AutoRaise.app` sets itself up as a
-login item when you ask it to, through the menu.
+Both read the same settings file, both show the menu bar icon, and both open the same settings
+window. Only `AutoRaise.app` can register as a login item.
 
 ## Troubleshooting
 
@@ -110,7 +137,9 @@ separates "AutoRaise cannot see the window" from "AutoRaise decided against it".
       main: yes, dialog: no, floating: no, full screen: no
       counts as a main window: yes
 
-For a running instance, turn on "Verbose Logging" in the menu, or start it with `-verbose true`.
+For a running instance, turn on Verbose Logging in Settings under Advanced, or start it with
+`-verbose true`. The same page has a Copy button that puts everything worth reporting on the
+clipboard.
 
 Other things worth checking:
 
@@ -152,6 +181,9 @@ For a release, sign with a Developer ID and notarize:
     src/Config.mm        settings, from defaults through file to arguments
     src/Quirks.mm        per app knowledge, built in and user supplied
     src/MenuBar.mm       the status item
+    src/SettingsWindow.mm  the settings window and its six pages
+    src/SettingsUI.mm      the controls it is built from
+    src/Shortcut.mm        the global pause shortcut
     tests/               the decision logic under test
     tools/make-icon.mm   the app icon, drawn in code
 

@@ -531,6 +531,103 @@ static void testQuirks(void) {
     CHECK_EQ_INT(roundTripped.pwaBrowsers.count, defaults.pwaBrowsers.count);
 }
 
+//------------------------------------------------ shortcuts -----------------------------------------------
+
+static void testShortcuts(void) {
+    CASE("a shortcut needs modifiers and a key");
+    ARShortcut shortcut = ARShortcutParse(@"control-option-A");
+    CHECK(shortcut.valid);
+    CHECK_EQ_INT(shortcut.modifiers, kCGEventFlagMaskControl | kCGEventFlagMaskAlternate);
+    CHECK(ARShortcutParse(@"command-shift-F5").valid);
+    CHECK(ARShortcutParse(@"cmd-ctrl-Space").valid);
+
+    CASE("a bare key is refused, because it would fire while typing");
+    CHECK(!ARShortcutParse(@"A").valid);
+    CHECK(!ARShortcutParse(@"").valid);
+    CHECK(!ARShortcutParse(nil).valid);
+
+    CASE("nonsense is refused");
+    CHECK(!ARShortcutParse(@"control-banana").valid);
+    CHECK(!ARShortcutParse(@"control").valid);
+
+    CASE("the stored spelling is normalised");
+    CHECK_EQ_STR(ARShortcutDescribe(ARShortcutParse(@"option-control-A")), @"control-option-A");
+    CHECK_EQ_STR(ARShortcutDescribe(ARShortcutParse(@"cmd-shift-A")), @"shift-command-A");
+    CHECK_EQ_STR(ARShortcutDescribe(ARShortcutParse(@"ctrl-Space")), @"control-Space");
+
+    CASE("the displayed spelling is the one macOS uses");
+    CHECK_EQ_STR(ARShortcutDisplay(ARShortcutParse(@"control-option-A")), @"⌃⌥A");
+    CHECK_EQ_STR(ARShortcutDisplay(ARShortcutParse(@"command-shift-Return")), @"⇧⌘↩");
+    CHECK_EQ_STR(ARShortcutDisplay(ARShortcutParse(@"nonsense")), @"None");
+
+    CASE("a shortcut survives a round trip through the settings file");
+    ARConfig *config = ARConfigFromValues(@{@"toggleShortcut": @"option-control-J"}, nil);
+    CHECK_EQ_STR(config.toggleShortcut, @"control-option-J");
+    CHECK_EQ_INT(config.warnings.count, 0);
+
+    CASE("an unusable shortcut is reported rather than kept");
+    config = ARConfigFromValues(@{@"toggleShortcut": @"J"}, nil);
+    CHECK(config.toggleShortcut == nil);
+    CHECK_EQ_INT(config.warnings.count, 1);
+}
+
+//----------------------------------------------- writing --------------------------------------------------
+
+static NSString *writeTemp(NSString *contents) {
+    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:
+        @"autoraise-test-config"];
+    [contents writeToFile: path atomically: YES encoding: NSUTF8StringEncoding error: nil];
+    return path;
+}
+
+static NSString *readTemp(NSString *path) {
+    return [NSString stringWithContentsOfFile: path encoding: NSUTF8StringEncoding error: nil];
+}
+
+static void testConfigWriting(void) {
+    CASE("an existing setting is replaced where it stands");
+    NSString *path = writeTemp(@"# my notes\ndelay=1\nverbose=false\n# trailing note\n");
+    CHECK(ARConfigWrite(path, @{@"delay": @"4"}, nil));
+    CHECK_EQ_STR(readTemp(path), @"# my notes\ndelay=4\nverbose=false\n# trailing note\n");
+
+    CASE("a new setting is appended and the comments stay");
+    path = writeTemp(@"# keep me\ndelay=1\n");
+    CHECK(ARConfigWrite(path, @{@"mouseDelta": @"2"}, nil));
+    NSString *result = readTemp(path);
+    CHECK([result containsString: @"# keep me"]);
+    CHECK([result containsString: @"delay=1"]);
+    CHECK([result containsString: @"mouseDelta=2"]);
+
+    CASE("a commented out setting stays a comment");
+    path = writeTemp(@"#warpX=0.5\n");
+    CHECK(ARConfigWrite(path, @{@"warpX": @"0.25"}, nil));
+    result = readTemp(path);
+    CHECK([result containsString: @"#warpX=0.5"]);
+    CHECK([result containsString: @"warpX=0.25"]);
+
+    CASE("NSNull removes a setting");
+    path = writeTemp(@"warpX=0.5\nwarpY=0.5\ndelay=1\n");
+    CHECK(ARConfigWrite(path, @{@"warpX": [NSNull null], @"warpY": [NSNull null]}, nil));
+    result = readTemp(path);
+    CHECK(![result containsString: @"warpX"]);
+    CHECK(![result containsString: @"warpY"]);
+    CHECK([result containsString: @"delay=1"]);
+
+    CASE("settings this build does not know about are left alone");
+    path = writeTemp(@"delay=1\nsomethingNewer=7\n");
+    CHECK(ARConfigWrite(path, @{@"delay": @"2"}, nil));
+    CHECK([readTemp(path) containsString: @"somethingNewer=7"]);
+
+    CASE("what was written reads back the same");
+    path = writeTemp(@"");
+    CHECK(ARConfigWrite(path, @{@"delay": @"6", @"ignoreApps": @"Xcode"}, nil));
+    NSDictionary *values = ARConfigParseFile(readTemp(path), [NSMutableArray array]);
+    CHECK_EQ_STR(values[@"delay"], @"6");
+    CHECK_EQ_STR(values[@"ignoreApps"], @"Xcode");
+
+    [[NSFileManager defaultManager] removeItemAtPath: path error: nil];
+}
+
 int main(void) {
     @autoreleasepool {
         testMatching();
@@ -541,6 +638,8 @@ int main(void) {
         testConfigParsing();
         testConfigValues();
         testQuirks();
+        testShortcuts();
+        testConfigWriting();
 
         printf("%d checks, %d failures\n", checks, failures);
         return failures ? 1 : 0;
