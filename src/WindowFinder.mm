@@ -553,34 +553,6 @@ BOOL ARApplicationHasMainWindow(pid_t pid) {
     return YES;
 }
 
-BOOL ARApplicationHasPanel(pid_t pid, CGWindowID ignoring) {
-    static NSTimeInterval checkedAt = 0;
-    static pid_t checkedPid = 0;
-    static BOOL cached = NO;
-
-    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-    if (pid == checkedPid && now - checkedAt < 0.25) { return cached; }
-    checkedPid = pid;
-    checkedAt = now;
-    cached = NO;
-
-    NSArray *windows = (NSArray *) CFBridgingRelease(CGWindowListCopyWindowInfo(
-        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
-    for (NSDictionary *window in windows) {
-        if ([window[(__bridge id) kCGWindowOwnerPID] intValue] != pid) { continue; }
-        if ([window[(__bridge id) kCGWindowNumber] unsignedIntValue] == ignoring) { continue; }
-        if ([window[(__bridge id) kCGWindowLayer] intValue] > 0) {
-            if (verboseLogging) {
-                NSLog(@"Frontmost app has a panel open: `%@`",
-                      window[(__bridge id) kCGWindowName] ?: @"(untitled)");
-            }
-            cached = YES;
-            break;
-        }
-    }
-    return cached;
-}
-
 AXUIElementRef _Nullable ARCopyActivatedWindow(pid_t pid) {
     AXUIElementRef _app = AXUIElementCreateApplication(pid);
     AXUIElementSetMessagingTimeout(_app, AR_AX_TIMEOUT);

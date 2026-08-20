@@ -64,10 +64,6 @@ ARRingStyle ARRingStyleDefaults(void);
 @property (nonatomic) BOOL legacyActivation;
 @property (nonatomic) BOOL windowServerHitTest;
 
-// Leave an application alone while it has a panel open, so hovering away does
-// not dismiss a colour picker or an inspector.
-@property (nonatomic) BOOL panelsKeepFocus;
-
 @property (nonatomic) BOOL menuBarIcon;
 // Whether raising is switched on at all, so pausing survives a restart.
 @property (nonatomic) BOOL enabled;

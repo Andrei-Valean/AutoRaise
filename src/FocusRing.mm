@@ -148,8 +148,6 @@ BOOL ARFocusRingVerbose = NO;
 
 - (BOOL)visible { return _panel.isVisible; }
 
-- (CGWindowID)windowId { return (CGWindowID) _panel.windowNumber; }
-
 // The accessibility API reports window frames from the top left of the primary
 // display; NSWindow wants them from the bottom left.
 - (NSRect)panelFrameForWindowFrame:(CGRect)frame {

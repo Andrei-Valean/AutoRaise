@@ -29,7 +29,6 @@ static NSString *const kWindowServerHitTest = @"windowServerHitTest";
 static NSString *const kMenuBarIcon = @"menuBarIcon";
 static NSString *const kLiveReload = @"liveReload";
 static NSString *const kVerbose = @"verbose";
-static NSString *const kPanelsKeepFocus = @"panelsKeepFocus";
 static NSString *const kFocusRing = @"focusRing";
 static NSString *const kFocusRingColor = @"focusRingColor";
 static NSString *const kFocusRingStyle = @"focusRingStyle";
@@ -49,7 +48,7 @@ static NSArray<NSString *> *ARConfigKeys(void) {
              kInvertIgnoreApps, kIgnoreApps, kIgnoreTitles, kStayFocusedBundleIds,
              kDisableKey, kMouseDelta, kLegacyActivation, kWindowServerHitTest,
              kMenuBarIcon, kLiveReload, kVerbose, kEnabled, kToggleShortcut,
-             kPanelsKeepFocus, kFocusRing, kFocusRingColor, kFocusRingStyle, kFocusRingWidth,
+             kFocusRing, kFocusRingColor, kFocusRingStyle, kFocusRingWidth,
              kFocusRingGlow, kFocusRingRadius, kFocusRingOpacity, kFocusRingPulse,
              kRaiseShortcut, kConfig];
 }
@@ -355,7 +354,6 @@ ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
         }
     }
 
-    config.panelsKeepFocus = ARBool(values, kPanelsKeepFocus, YES);
     config.focusRing = ARBool(values, kFocusRing, YES);
     config.focusRingStyle = ARRingStyleFromValues(values, allWarnings);
     BOOL colorOk = YES;
@@ -489,9 +487,6 @@ NSString *ARConfigTemplate(void) {
             "#altTaskSwitcher=false\n"
             "\n"
             "requireMouseStop=true\n"
-            "# Leave an app alone while it has a panel open, so hovering away does not\n"
-            "# dismiss a colour picker, an inspector or a find bar.\n"
-            "panelsKeepFocus=true\n"
             "ignoreSpaceChanged=false\n"
             "mouseDelta=0.0\n"
             "\n"
@@ -541,7 +536,6 @@ NSString *ARConfigUsage(void) {
             "  -warpX <0.5> -warpY <0.5> -scale <2.0>\n"
             "  -altTaskSwitcher <true|false>\n"
             "  -requireMouseStop <true|false>\n"
-            "  -panelsKeepFocus <true|false>         leave apps with a panel open alone\n"
             "  -ignoreSpaceChanged <true|false>\n"
             "  -invertDisableKey <true|false>\n"
             "  -invertIgnoreApps <true|false>\n"
