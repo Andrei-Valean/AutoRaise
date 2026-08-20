@@ -491,6 +491,57 @@ static ARRaiseMode ARModeForConfig(ARConfig *config) {
     [self addCard: @[stop, space, delta]];
     [self addFootnote: @"Raise a shaky hand's threshold if windows come forward while you are "
                        "only passing over them."];
+
+    // Focus without raise is invisible unless something says which window is
+    // listening, so the ring belongs next to the setting that causes it.
+    ARToggleRow *ring = [[ARToggleRow alloc] initWithTitle: @"Outline the focused window"
+        subtitle: @"While it has the keyboard but is still behind something"
+        on: config.focusRing];
+    ring.onChange = ^(BOOL on) { [weakSelf setBool: @"focusRing" to: on]; };
+
+    NSColorWell *well = [[NSColorWell alloc] init];
+    well.color = config.focusRingColor.followsAccent
+        ? NSColor.controlAccentColor
+        : [NSColor colorWithSRGBRed: config.focusRingColor.red
+                             green: config.focusRingColor.green
+                              blue: config.focusRingColor.blue
+                             alpha: config.focusRingColor.alpha];
+    [well.widthAnchor constraintEqualToConstant: 52].active = YES;
+    [well.heightAnchor constraintEqualToConstant: 24].active = YES;
+    well.target = self;
+    well.action = @selector(ringColorChanged:);
+    ARRow *color = [[ARRow alloc] initWithTitle: @"Outline colour"
+        subtitle: config.focusRingColor.followsAccent ? @"Following the system accent colour" : nil
+        accessory: well];
+
+    ARShortcutField *raiseField = [[ARShortcutField alloc] initWithFrame: NSZeroRect];
+    raiseField.shortcut = config.raiseShortcut;
+    raiseField.onChange = ^(NSString *shortcut) {
+        [weakSelf set: @"raiseShortcut" to: shortcut];
+    };
+    ARRow *raiseRow = [[ARRow alloc] initWithTitle: @"Raise it with"
+        subtitle: @"Brings the outlined window to the front" accessory: raiseField];
+
+    [self addCard: @[ring, color, raiseRow]];
+    BOOL ringUsable = config.focusFirst;
+    [color setRowEnabled: ringUsable && config.focusRing];
+    [raiseRow setRowEnabled: ringUsable];
+    [ring setRowEnabled: ringUsable];
+    if (!ringUsable) {
+        [self addFootnote: @"The outline only appears when a window is focused without being "
+                           "raised, so it needs one of the focus modes above."];
+    } else {
+        [self addFootnote: @"Set the colour back to the system accent by choosing it in the "
+                           "colour picker's second tab, or by putting focusRingColor=accent in "
+                           "the settings file."];
+    }
+}
+
+- (void)ringColorChanged:(NSColorWell *)well {
+    NSColor *srgb = [well.color colorUsingColorSpace: NSColorSpace.sRGBColorSpace];
+    ARColor color = {NO, srgb.redComponent, srgb.greenComponent, srgb.blueComponent,
+                     srgb.alphaComponent};
+    [self set: @"focusRingColor" to: ARColorDescribe(color)];
 }
 
 - (void)updateDelayAvailability:(ARRaiseMode)mode {

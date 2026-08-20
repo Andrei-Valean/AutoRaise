@@ -27,6 +27,7 @@
 #import <ServiceManagement/ServiceManagement.h>
 
 #import "Config.h"
+#import "FocusRing.h"
 #import "MenuBar.h"
 #import "Policy.h"
 #import "Quirks.h"
@@ -122,6 +123,8 @@ static void window_manager_focus_window_without_raise(
 - (instancetype)initWithConfig:(ARConfig *)config;
 - (void)handleTappedEvent:(CGEventRef)event ofType:(CGEventType)type;
 - (void)windowDestroyed:(CGWindowID)windowId;
+- (void)hideFocusRing;
+- (void)followRingedWindow;
 - (void)shutDown;
 @end
 
@@ -130,6 +133,7 @@ static void window_manager_focus_window_without_raise(
     ARQuirks *_quirks;
     ARMenuBar *_menuBar;
     ARSettingsWindowController *_settingsWindow;
+    ARFocusRing *_focusRing;
     BOOL _enabled;
 
     // Mouse tracking. _point is fed by the event tap, so a still cursor needs no
@@ -161,6 +165,9 @@ static void window_manager_focus_window_without_raise(
 
     AXUIElementRef _lastFocusedWindow;
     pid_t _lastFocusedWindowPid;
+    AXObserverRef _ringObserver;
+    CFRunLoopSourceRef _ringObserverSource;
+    AXUIElementRef _ringWindow;
     AXUIElementRef _previousFinderWindow;
 
     NSTimer *_fastTimer;
@@ -194,6 +201,8 @@ static ARController *controller = nil;
         else if (quirksPath) { printf("Quirks from %s\n", quirksPath.UTF8String); }
 
         ARWindowFinderInit(_config.verbose);
+        _focusRing = [[ARFocusRing alloc] init];
+        _focusRing.color = _config.focusRingColor;
         CGSGetCursorScale(CGSMainConnectionID(), &_systemCursorScale);
         if (_config.verbose) { NSLog(@"System cursor scale: %f", _systemCursorScale); }
 
@@ -209,6 +218,7 @@ static ARController *controller = nil;
 
 // Anything that must be undone before the process goes away, however it goes.
 - (void)shutDown {
+    [self hideFocusRing];
     [self restoreCursorScale];
     [_menuBar remove];
     _menuBar = nil;
@@ -233,6 +243,8 @@ static ARController *controller = nil;
 
     ARWindowFinderSetVerbose(config.verbose);
     _enabled = config.enabled;
+    _focusRing.color = config.focusRingColor;
+    if (!config.focusRing || !config.focusFirst || !config.enabled) { [self hideFocusRing]; }
     _delay = ARResetDelay();
     if (timingChanged) { [self startTimers]; }
     if (warpChanged) { [self registerNotifications]; }
@@ -403,6 +415,8 @@ static CGEventRef ARTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
         CGEventMaskBit(kCGEventKeyDown) |
         CGEventMaskBit(kCGEventFlagsChanged) |
         CGEventMaskBit(kCGEventMouseMoved) |
+        CGEventMaskBit(kCGEventLeftMouseDown) |
+        CGEventMaskBit(kCGEventRightMouseDown) |
         CGEventMaskBit(kCGEventLeftMouseDragged) |
         CGEventMaskBit(kCGEventRightMouseDragged) |
         CGEventMaskBit(kCGEventOtherMouseDragged),
@@ -438,6 +452,13 @@ static CGEventRef ARTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
         return;
     }
 
+    if (type == kCGEventLeftMouseDown || type == kCGEventRightMouseDown) {
+        // A click means the user has taken over: whatever they clicked is the
+        // window they meant, so the ring has nothing left to say.
+        [self hideFocusRing];
+        return;
+    }
+
     if (type != kCGEventKeyDown && type != kCGEventFlagsChanged) { return; }
 
     _flags = CGEventGetFlags(event);
@@ -457,7 +478,7 @@ static CGEventRef ARTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
         [self onAppActivated];
     }
 
-    if (type == kCGEventKeyDown && [self handleToggleShortcut: event]) { return; }
+    if (type == kCGEventKeyDown && [self handleShortcuts: event]) { return; }
 
     if (type == kCGEventKeyDown) {
         CGKeyCode keycode = (CGKeyCode) CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
@@ -469,9 +490,9 @@ static CGEventRef ARTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
     }
 }
 
-- (BOOL)handleToggleShortcut:(CGEventRef)event {
-    if (!_config.toggleShortcut.length) { return NO; }
-    ARShortcut shortcut = ARShortcutParse(_config.toggleShortcut);
+static BOOL ARShortcutMatches(NSString *configured, CGEventRef event) {
+    if (!configured.length) { return NO; }
+    ARShortcut shortcut = ARShortcutParse(configured);
     if (!shortcut.valid) { return NO; }
 
     CGKeyCode keyCode = (CGKeyCode) CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
@@ -479,10 +500,96 @@ static CGEventRef ARTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
 
     CGEventFlags mask = kCGEventFlagMaskControl | kCGEventFlagMaskAlternate |
                         kCGEventFlagMaskShift | kCGEventFlagMaskCommand;
-    if ((CGEventGetFlags(event) & mask) != shortcut.modifiers) { return NO; }
+    return (CGEventGetFlags(event) & mask) == shortcut.modifiers;
+}
 
-    [self setAutoRaiseEnabled: !_enabled];
-    return YES;
+- (BOOL)handleShortcuts:(CGEventRef)event {
+    if (ARShortcutMatches(_config.toggleShortcut, event)) {
+        [self setAutoRaiseEnabled: !_enabled];
+        return YES;
+    }
+    if (ARShortcutMatches(_config.raiseShortcut, event)) {
+        [self raiseRingedWindow];
+        return YES;
+    }
+    return NO;
+}
+
+//------------------------------------------------ focus ring ----------------------------------------------
+
+// Raises whatever the ring is around: the window that has the keyboard but is
+// still behind something.
+- (void)raiseRingedWindow {
+    if (!_lastFocusedWindow) {
+        if (_config.verbose) { NSLog(@"Nothing focused to raise"); }
+        return;
+    }
+    if (_config.verbose) { NSLog(@"Raise shortcut"); }
+    [self raiseAndActivate: _lastFocusedWindow pid: _lastFocusedWindowPid];
+    [self hideFocusRing];
+}
+
+static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef element,
+                                   CFStringRef notification, void *context) {
+    if (CFEqual(notification, kAXUIElementDestroyedNotification)) {
+        [controller hideFocusRing];
+    } else {
+        [controller followRingedWindow];
+    }
+}
+
+- (void)showFocusRingAround:(AXUIElementRef)window {
+    if (!_config.focusRing) { return; }
+    CGRect frame = CGRectZero;
+    if (!ARWindowFrame(window, &frame)) { return; }
+
+    if (_ringWindow != window) {
+        [self stopFollowingRingedWindow];
+        _ringWindow = (AXUIElementRef) CFRetain(window);
+        pid_t pid = 0;
+        if (AXUIElementGetPid(window, &pid) == kAXErrorSuccess &&
+            AXObserverCreate(pid, ARRingObserverCallback, &_ringObserver) == kAXErrorSuccess) {
+            // Following the window keeps the ring on it when it is dragged or
+            // resized, without polling for the frame.
+            AXObserverAddNotification(_ringObserver, window, kAXWindowMovedNotification, NULL);
+            AXObserverAddNotification(_ringObserver, window, kAXWindowResizedNotification, NULL);
+            AXObserverAddNotification(_ringObserver, window, kAXUIElementDestroyedNotification, NULL);
+            _ringObserverSource = AXObserverGetRunLoopSource(_ringObserver);
+            if (_ringObserverSource) {
+                CFRunLoopAddSource(CFRunLoopGetCurrent(), _ringObserverSource,
+                                   kCFRunLoopCommonModes);
+            }
+        }
+    }
+    [_focusRing showAroundFrame: frame];
+}
+
+- (void)followRingedWindow {
+    CGRect frame = CGRectZero;
+    if (_ringWindow && _focusRing.visible && ARWindowFrame(_ringWindow, &frame)) {
+        [_focusRing showAroundFrame: frame];
+    }
+}
+
+- (void)stopFollowingRingedWindow {
+    if (_ringObserver && _ringWindow) {
+        for (NSString *name in @[(__bridge NSString *) kAXWindowMovedNotification,
+                                 (__bridge NSString *) kAXWindowResizedNotification,
+                                 (__bridge NSString *) kAXUIElementDestroyedNotification]) {
+            AXObserverRemoveNotification(_ringObserver, _ringWindow, (__bridge CFStringRef) name);
+        }
+    }
+    if (_ringObserverSource) {
+        CFRunLoopRemoveSource(CFRunLoopGetCurrent(), _ringObserverSource, kCFRunLoopCommonModes);
+        _ringObserverSource = NULL;
+    }
+    if (_ringWindow) { CFRelease(_ringWindow); _ringWindow = NULL; }
+    if (_ringObserver) { CFRelease(_ringObserver); _ringObserver = NULL; }
+}
+
+- (void)hideFocusRing {
+    [_focusRing hide];
+    [self stopFollowingRingedWindow];
 }
 
 //---------------------------------------------- notifications ---------------------------------------------
@@ -583,9 +690,14 @@ static CGEventRef ARTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
 
 - (void)raiseAndActivate:(AXUIElementRef)window pid:(pid_t)pid {
     if (_config.verbose) { NSLog(@"Raise"); }
-    if (AXUIElementPerformAction(window, kAXRaiseAction) == kAXErrorSuccess) {
-        [self activate: pid];
+    AXError error = AXUIElementPerformAction(window, kAXRaiseAction);
+    if (error != kAXErrorSuccess && _config.verbose) {
+        NSLog(@"Raise action refused (AXError %d), activating anyway", error);
     }
+    // Activate either way: a window that will not raise should still take the
+    // keyboard, otherwise hovering it appears to do nothing at all.
+    [self activate: pid];
+    [self hideFocusRing];
 }
 
 //---------------------------------------------- mouse warping ---------------------------------------------
@@ -832,6 +944,7 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
     pid_t frontmostPid = frontmost.processIdentifier;
 
     ARRaiseQuery *query = [[ARRaiseQuery alloc] init];
+    query.ownPid = getpid();
     query.mouseWindow = mouse;
     query.mouseWindowPresent = mouseWindowPresent;
     query.invertIgnoreApps = _config.invertIgnoreApps;
@@ -891,10 +1004,13 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
 #pragma clang diagnostic pop
 
         if (mouse.isFloating) {
-            // Focusing a floating window without raising it is not something
-            // the private call below can do.
-            if (_config.verbose) { NSLog(@"Unable to focus floating window"); }
-        } else if (!decision.appRaisesOnFocus || _config.raiseAfterFocusTicks == 0) {
+            // The private call cannot focus a floating window without raising
+            // it, and leaving it alone would make hovering one do nothing.
+            if (_config.verbose) { NSLog(@"Floating window, raising instead of focusing"); }
+            [self raiseAndActivate: _mouseWindow pid: mouse.pid];
+            return;
+        }
+        if (!decision.appRaisesOnFocus || _config.raiseAfterFocusTicks == 0) {
             window_manager_focus_window_without_raise(&mouseWindowPsn, mouse.windowId,
                 _focusedWindowPsn, focused.windowId, _config.verbose);
         }
@@ -902,6 +1018,7 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         if (_lastFocusedWindow) { CFRelease(_lastFocusedWindow); }
         _lastFocusedWindow = (AXUIElementRef) CFRetain(_mouseWindow);
         _lastFocusedWindowPid = mouse.pid;
+        [self showFocusRingAround: _mouseWindow];
         if (_config.raiseAfterFocusTicks) { [self windowFocused: _lastFocusedWindow]; }
         return;
     }
@@ -916,6 +1033,7 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
 - (void)setAutoRaiseEnabled:(BOOL)enabled {
     _enabled = enabled;
     _delay = ARResetDelay();
+    if (!enabled) { [self hideFocusRing]; }
     if (enabled) { [self wakeUp]; } else { [_fastTimer invalidate]; _fastTimer = nil; }
     NSLog(@"AutoRaise %@", enabled ? @"enabled" : @"disabled");
     [self applySettings: @{@"enabled": enabled ? @"true" : @"false"}];

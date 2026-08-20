@@ -28,6 +28,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, nullable) NSString *bundleId;
 @property (nonatomic) BOOL isMain;               // kAXMainAttribute
 @property (nonatomic) BOOL isDialog;             // kAXDialogSubrole
+@property (nonatomic) BOOL isSystemDialog;       // kAXSystemDialogSubrole
 @property (nonatomic) BOOL isFloating;           // (system) floating or unknown subrole
 @property (nonatomic) BOOL hasFrame;
 @property (nonatomic) CGRect frame;
@@ -60,6 +61,7 @@ typedef struct {
 @property (nonatomic) BOOL mouseWindowPresent;           // window was not destroyed under us
 @property (nonatomic) BOOL frontmostHasMainWindow;
 @property (nonatomic) BOOL invertIgnoreApps;
+@property (nonatomic) pid_t ownPid;          // AutoRaise never raises itself
 @property (nonatomic) BOOL focusFirst;
 @property (nonatomic, copy) NSArray<NSString *> *ignoreApps;
 @property (nonatomic, copy) NSArray<NSString *> *ignoreTitles;

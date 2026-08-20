@@ -10,10 +10,11 @@ ifeq ($(SKYLIGHT_AVAILABLE), 1)
     FRAMEWORKS += -F /System/Library/PrivateFrameworks -framework SkyLight
 endif
 
-SOURCES := src/main.mm src/Config.mm src/MenuBar.mm src/Policy.mm src/Quirks.mm \
-           src/Shortcut.mm src/SettingsUI.mm src/SettingsWindow.mm src/WindowFinder.mm
-HEADERS := src/Config.h src/MenuBar.h src/Policy.h src/Quirks.h src/SettingsUI.h \
-           src/SettingsWindow.h src/WindowFinder.h
+SOURCES := src/main.mm src/Config.mm src/FocusRing.mm src/MenuBar.mm src/Policy.mm \
+           src/Quirks.mm src/Shortcut.mm src/SettingsUI.mm src/SettingsWindow.mm \
+           src/WindowFinder.mm
+HEADERS := src/Config.h src/FocusRing.h src/MenuBar.h src/Policy.h src/Quirks.h \
+           src/SettingsUI.h src/SettingsWindow.h src/WindowFinder.h
 OBJECTS := $(patsubst src/%.mm,build/%.o,$(SOURCES))
 
 # Signing is what stops macOS from treating every build as a brand new app and

@@ -15,6 +15,16 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+// A colour as stored in the settings file: "#0A84FF", or "accent" to follow
+// whatever accent colour the system is set to.
+typedef struct {
+    BOOL followsAccent;
+    CGFloat red, green, blue, alpha;
+} ARColor;
+
+ARColor ARColorParse(NSString *_Nullable text, BOOL *_Nullable ok);
+NSString *ARColorDescribe(ARColor color);
+
 @interface ARConfig : NSObject
 
 // Timing. delay and focusDelay are counted in evaluations, as they always were:
@@ -47,6 +57,12 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) BOOL enabled;
 // Global shortcut that toggles the above, "control-option-A" style, or nil.
 @property (nonatomic, copy, nullable) NSString *toggleShortcut;
+// Raises the window that is focused but not raised, when focus-first is on.
+@property (nonatomic, copy, nullable) NSString *raiseShortcut;
+
+// The outline drawn around a window that has the keyboard but was not raised.
+@property (nonatomic) BOOL focusRing;
+@property (nonatomic) ARColor focusRingColor;
 @property (nonatomic) BOOL liveReload;
 @property (nonatomic) BOOL verbose;
 

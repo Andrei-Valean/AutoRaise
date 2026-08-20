@@ -29,6 +29,9 @@ static NSString *const kWindowServerHitTest = @"windowServerHitTest";
 static NSString *const kMenuBarIcon = @"menuBarIcon";
 static NSString *const kLiveReload = @"liveReload";
 static NSString *const kVerbose = @"verbose";
+static NSString *const kFocusRing = @"focusRing";
+static NSString *const kFocusRingColor = @"focusRingColor";
+static NSString *const kRaiseShortcut = @"raiseShortcut";
 static NSString *const kEnabled = @"enabled";
 static NSString *const kToggleShortcut = @"toggleShortcut";
 static NSString *const kConfig = @"config";
@@ -38,7 +41,8 @@ static NSArray<NSString *> *ARConfigKeys(void) {
              kAltTaskSwitcher, kRequireMouseStop, kIgnoreSpaceChanged, kInvertDisableKey,
              kInvertIgnoreApps, kIgnoreApps, kIgnoreTitles, kStayFocusedBundleIds,
              kDisableKey, kMouseDelta, kLegacyActivation, kWindowServerHitTest,
-             kMenuBarIcon, kLiveReload, kVerbose, kEnabled, kToggleShortcut, kConfig];
+             kMenuBarIcon, kLiveReload, kVerbose, kEnabled, kToggleShortcut,
+             kFocusRing, kFocusRingColor, kRaiseShortcut, kConfig];
 }
 
 @implementation ARConfig
@@ -61,6 +65,58 @@ static NSArray<NSString *> *ARConfigKeys(void) {
 }
 
 @end
+
+// Accepts "accent", "#RGB", "#RRGGBB" and "#RRGGBBAA", with or without the hash.
+ARColor ARColorParse(NSString *text, BOOL *ok) {
+    ARColor color = {YES, 0, 0, 0, 1};
+    if (ok) { *ok = YES; }
+    NSString *value = [[text stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceCharacterSet]] lowercaseString];
+    if (!value.length || [value isEqualToString: @"accent"]) { return color; }
+
+    if ([value hasPrefix: @"#"]) { value = [value substringFromIndex: 1]; }
+    NSCharacterSet *hex = [NSCharacterSet characterSetWithCharactersInString: @"0123456789abcdef"];
+    if ([value stringByTrimmingCharactersInSet: hex].length) {
+        if (ok) { *ok = NO; }
+        return color;
+    }
+
+    unsigned components[4] = {0, 0, 0, 255};
+    if (value.length == 3) {
+        for (int i = 0; i < 3; i++) {
+            NSString *digit = [value substringWithRange: NSMakeRange(i, 1)];
+            unsigned n = (unsigned) strtoul(digit.UTF8String, NULL, 16);
+            components[i] = n * 17;   // #abc means #aabbcc
+        }
+    } else if (value.length == 6 || value.length == 8) {
+        for (NSUInteger i = 0; i < value.length / 2; i++) {
+            NSString *pair = [value substringWithRange: NSMakeRange(i * 2, 2)];
+            components[i] = (unsigned) strtoul(pair.UTF8String, NULL, 16);
+        }
+    } else {
+        if (ok) { *ok = NO; }
+        return color;
+    }
+
+    color.followsAccent = NO;
+    color.red = components[0] / 255.0;
+    color.green = components[1] / 255.0;
+    color.blue = components[2] / 255.0;
+    color.alpha = components[3] / 255.0;
+    return color;
+}
+
+NSString *ARColorDescribe(ARColor color) {
+    if (color.followsAccent) { return @"accent"; }
+    if (color.alpha >= 1.0) {
+        return [NSString stringWithFormat: @"#%02X%02X%02X",
+            (unsigned) round(color.red * 255), (unsigned) round(color.green * 255),
+            (unsigned) round(color.blue * 255)];
+    }
+    return [NSString stringWithFormat: @"#%02X%02X%02X%02X",
+        (unsigned) round(color.red * 255), (unsigned) round(color.green * 255),
+        (unsigned) round(color.blue * 255), (unsigned) round(color.alpha * 255)];
+}
 
 // Splits on commas, honouring a backslash escape so that an app name or a
 // regular expression may contain one.
@@ -229,15 +285,29 @@ ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
     config.verbose = ARBool(values, kVerbose, NO);
     config.enabled = ARBool(values, kEnabled, YES);
 
-    NSString *shortcut = values[kToggleShortcut];
-    if (shortcut.length && ![shortcut isEqualToString: @"none"]) {
+    for (NSString *key in @[kToggleShortcut, kRaiseShortcut]) {
+        NSString *shortcut = values[key];
+        if (!shortcut.length || [shortcut isEqualToString: @"none"]) { continue; }
         ARShortcut parsed = ARShortcutParse(shortcut);
-        if (parsed.valid) {
+        if (!parsed.valid) {
+            [allWarnings addObject: [NSString stringWithFormat:
+                @"%@ \"%@\" is not a shortcut, for example control-option-A", key, shortcut]];
+            continue;
+        }
+        if ([key isEqualToString: kToggleShortcut]) {
             config.toggleShortcut = ARShortcutDescribe(parsed);
         } else {
-            [allWarnings addObject: [NSString stringWithFormat:
-                @"toggleShortcut \"%@\" is not a shortcut, for example control-option-A", shortcut]];
+            config.raiseShortcut = ARShortcutDescribe(parsed);
         }
+    }
+
+    config.focusRing = ARBool(values, kFocusRing, YES);
+    BOOL colorOk = YES;
+    config.focusRingColor = ARColorParse(values[kFocusRingColor], &colorOk);
+    if (!colorOk) {
+        [allWarnings addObject: [NSString stringWithFormat:
+            @"focusRingColor \"%@\" is not a colour, for example #0A84FF or accent",
+            values[kFocusRingColor]]];
     }
 
     config.mouseDelta = [values[kMouseDelta] floatValue];
@@ -386,7 +456,15 @@ NSString *ARConfigTemplate(void) {
             "\n"
             "menuBarIcon=true\n"
             "liveReload=true\n"
-            "verbose=false\n";
+            "verbose=false\n"
+            "\n"
+            "# While focus-first has a window focused but not raised, outline it.\n"
+            "# The colour is a hex value, or \"accent\" to follow the system.\n"
+            "focusRing=true\n"
+            "focusRingColor=accent\n"
+            "# Shortcuts, for example control-option-J. Leave out for none.\n"
+            "#toggleShortcut=none\n"
+            "#raiseShortcut=none\n";
 }
 
 NSString *ARConfigUsage(void) {
@@ -410,6 +488,10 @@ NSString *ARConfigUsage(void) {
             "  -legacyActivation <true|false>        for GTK, SDL and wine apps\n"
             "  -menuBarIcon <true|false>\n"
             "  -liveReload <true|false>\n"
+            "  -focusRing <true|false>               outline a focused, unraised window\n"
+            "  -focusRingColor <#0A84FF|accent>\n"
+            "  -toggleShortcut <control-option-J>    pause and resume from anywhere\n"
+            "  -raiseShortcut <control-option-K>     raise the outlined window\n"
             "  -verbose <true|false>\n"
             "  -config <path>                        use this file instead of the default\n"
             "  -dumpQuirks                           print the built-in app quirks\n"

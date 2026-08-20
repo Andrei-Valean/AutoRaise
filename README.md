@@ -24,7 +24,8 @@ The window has six pages:
 - **General**: the master switch, open at login, the menu bar icon, and a global shortcut to pause
   and resume from anywhere.
 - **Raise & Focus**: whether a hovered window is raised, focused first and raised later, or only
-  focused, plus the delays for each and how much pointer movement to ignore.
+  focused, plus the delays for each, how much pointer movement to ignore, and the outline that marks
+  a window holding the keyboard without having been raised.
 - **Pointer**: mouse warping on window switch. Drag the pointer around a small window to say where
   it should land.
 - **Exceptions**: apps and window titles to leave alone, apps that keep the focus, and the modifier
@@ -76,9 +77,14 @@ comments, ordering and any settings a future version adds are left alone.
     liveReload=true
     verbose=false
 
-    # Set by the window; both survive a restart.
+    # Outline the window that has the keyboard but was not raised.
+    focusRing=true
+    focusRingColor=accent    # a hex colour such as #0A84FF, or accent
+
+    # Set by the window; all of these survive a restart.
     enabled=true
     toggleShortcut=control-option-J   # pause and resume from anywhere
+    raiseShortcut=control-option-R    # raise the outlined window
 
 The same names work as arguments, and `-key value` and `-key=value` are both accepted:
 
@@ -93,9 +99,30 @@ that setting in the window drops the argument, so the window always wins from th
 ### Focus first
 
 `focusDelay` focuses the hovered window without raising it, and raises it `delay` evaluations later,
-or never when `delay=0`. It works through undocumented SkyLight calls, so treat it as experimental:
-**there is no guarantee it keeps working in future macOS versions**. It used to require a separate
-build with `EXPERIMENTAL_FOCUS_FIRST`; now it is just a setting.
+or never when `delay=0`. Hover a chat window, a terminal or a notes window that is partly covered
+and type into it, with the windows staying exactly where they are.
+
+Because nothing moves, a focused window is otherwise indistinguishable from an unfocused one, so
+AutoRaise draws a pulsing outline around the one holding the keyboard. `focusRingColor` takes a hex
+colour or `accent` to follow the system, and `raiseShortcut` brings the outlined window to the front
+when you do want it in front after all. The outline disappears as soon as you click, focus something
+else, or raise it.
+
+It works through undocumented SkyLight calls, so treat it as experimental: **there is no guarantee
+it keeps working in future macOS versions**. It used to require a separate build with
+`EXPERIMENTAL_FOCUS_FIRST`; now it is just a setting.
+
+### One gesture, one result
+
+Hovering a window hands it the keyboard, whatever else is on screen:
+
+- A small window from another app sitting on top of a big one no longer makes the big one
+  unhoverable. That rule only applies within a single app, where the window on top is usually a
+  dialog belonging to the window underneath.
+- A window that refuses the raise request is activated anyway, so it still takes the keyboard rather
+  than appearing to ignore you.
+- A floating window, which cannot be focused without being raised, is raised instead of skipped.
+- A system dialog, a password prompt for instance, never loses the keyboard to a hover.
 
 ### App quirks
 

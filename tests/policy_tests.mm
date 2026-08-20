@@ -225,8 +225,25 @@ static void testDecisions(void) {
 
     CASE("a dialog of the hovered window keeps the focus");
     ARRaiseQuery *contained = makeQuery();
+    contained.focusedWindow.pid = contained.mouseWindow.pid;          // same app
     contained.focusedWindow.frame = CGRectMake(150, 150, 100, 100);   // inside the hovered window
     CHECK(!ARDecideRaise(contained).needsRaise);
+
+    CASE("but another app's small window on top does not block the one underneath");
+    ARRaiseQuery *foreign = makeQuery();
+    foreign.focusedWindow.frame = CGRectMake(150, 150, 100, 100);     // inside, different app
+    CHECK(ARDecideRaise(foreign).needsRaise);
+    ARRaiseQuery *foreignFocusFirst = makeQuery();
+    foreignFocusFirst.focusFirst = YES;
+    foreignFocusFirst.focusedWindow.frame = CGRectMake(150, 150, 100, 100);
+    CHECK(ARDecideRaise(foreignFocusFirst).needsRaise);
+
+    CASE("a system dialog never loses the keyboard");
+    ARRaiseQuery *prompt = makeQuery();
+    prompt.focusedWindow.isSystemDialog = YES;
+    CHECK(!ARDecideRaise(prompt).needsRaise);
+    prompt.focusFirst = YES;
+    CHECK(!ARDecideRaise(prompt).needsRaise);
 
     CASE("no focused window and no main window means raise");
     ARRaiseQuery *nothingFocused = makeQuery();
@@ -261,6 +278,11 @@ static void testDecisions(void) {
     CHECK(ARDecideAgainstFocused(sameProcess, decision));
     sameProcess.focusedWindow.frame = CGRectMake(150, 150, 100, 100);
     CHECK(!ARDecideAgainstFocused(sameProcess, decision));
+
+    CASE("AutoRaise never raises its own windows");
+    ARRaiseQuery *own = makeQuery();
+    own.ownPid = own.mouseWindow.pid;
+    CHECK(!ARDecideRaise(own).needsRaise);
 
     CASE("the accessibility helper window is always ignored");
     ARRaiseQuery *assistive = makeQuery();
@@ -531,6 +553,73 @@ static void testQuirks(void) {
     CHECK_EQ_INT(roundTripped.pwaBrowsers.count, defaults.pwaBrowsers.count);
 }
 
+//------------------------------------------------- colours ------------------------------------------------
+
+static void testColors(void) {
+    BOOL ok = NO;
+
+    CASE("a hex colour parses, with or without the hash");
+    ARColor color = ARColorParse(@"#0A84FF", &ok);
+    CHECK(ok);
+    CHECK(!color.followsAccent);
+    CHECK_EQ_INT(round(color.red * 255), 10);
+    CHECK_EQ_INT(round(color.green * 255), 132);
+    CHECK_EQ_INT(round(color.blue * 255), 255);
+    CHECK_EQ_INT(round(color.alpha * 255), 255);
+    CHECK(!ARColorParse(@"0a84ff", &ok).followsAccent);
+    CHECK(ok);
+
+    CASE("three digits expand, and eight carry alpha");
+    color = ARColorParse(@"#f0c", &ok);
+    CHECK(ok);
+    CHECK_EQ_INT(round(color.red * 255), 255);
+    CHECK_EQ_INT(round(color.green * 255), 0);
+    CHECK_EQ_INT(round(color.blue * 255), 204);
+    color = ARColorParse(@"#0A84FF80", &ok);
+    CHECK(ok);
+    CHECK_EQ_INT(round(color.alpha * 255), 128);
+
+    CASE("nothing, or the word accent, follows the system");
+    CHECK(ARColorParse(nil, &ok).followsAccent);
+    CHECK(ok);
+    CHECK(ARColorParse(@"accent", &ok).followsAccent);
+    CHECK(ok);
+    CHECK(ARColorParse(@"  ACCENT ", &ok).followsAccent);
+    CHECK(ok);
+
+    CASE("nonsense is reported and falls back to the accent colour");
+    CHECK(ARColorParse(@"banana", &ok).followsAccent);
+    CHECK(!ok);
+    CHECK(ARColorParse(@"#12345", &ok).followsAccent);
+    CHECK(!ok);
+
+    CASE("a colour survives a round trip");
+    CHECK_EQ_STR(ARColorDescribe(ARColorParse(@"#0a84ff", NULL)), @"#0A84FF");
+    CHECK_EQ_STR(ARColorDescribe(ARColorParse(@"accent", NULL)), @"accent");
+    CHECK_EQ_STR(ARColorDescribe(ARColorParse(@"#0A84FF80", NULL)), @"#0A84FF80");
+
+    CASE("the settings file reports a bad colour once");
+    ARConfig *config = ARConfigFromValues(@{@"focusRingColor": @"nope"}, nil);
+    CHECK(config.focusRingColor.followsAccent);
+    CHECK_EQ_INT(config.warnings.count, 1);
+    config = ARConfigFromValues(@{@"focusRingColor": @"#123456"}, nil);
+    CHECK(!config.focusRingColor.followsAccent);
+    CHECK_EQ_INT(config.warnings.count, 0);
+
+    CASE("the outline is on by default and both shortcuts start empty");
+    config = ARConfigFromValues(@{}, nil);
+    CHECK(config.focusRing);
+    CHECK(config.focusRingColor.followsAccent);
+    CHECK(config.toggleShortcut == nil);
+    CHECK(config.raiseShortcut == nil);
+
+    CASE("the two shortcuts are kept apart");
+    config = ARConfigFromValues(@{@"toggleShortcut": @"control-option-J",
+                                  @"raiseShortcut": @"control-option-K"}, nil);
+    CHECK_EQ_STR(config.toggleShortcut, @"control-option-J");
+    CHECK_EQ_STR(config.raiseShortcut, @"control-option-K");
+}
+
 //------------------------------------------------ shortcuts -----------------------------------------------
 
 static void testShortcuts(void) {
@@ -639,6 +728,7 @@ int main(void) {
         testConfigValues();
         testQuirks();
         testShortcuts();
+        testColors();
         testConfigWriting();
 
         printf("%d checks, %d failures\n", checks, failures);

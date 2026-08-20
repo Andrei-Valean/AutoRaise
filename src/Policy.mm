@@ -96,6 +96,9 @@ ARRaiseDecision ARDecideCandidate(ARRaiseQuery *query) {
     ARWindow *mouse = query.mouseWindow;
     ARQuirks *quirks = query.quirks;
 
+    // AutoRaise's own windows, the focus ring above all, are not candidates.
+    if (query.ownPid && mouse.pid == query.ownPid) { return decision; }
+
     BOOL needsRaise = !query.invertIgnoreApps && query.mouseWindowPresent;
 
     if (needsRaise && ARTitleMatches(mouse.title, quirks.titlesNeedingMainWindowCheck, nil)) {
@@ -125,14 +128,22 @@ BOOL ARDecideAgainstFocused(ARRaiseQuery *query, ARRaiseDecision candidate) {
     }
 
     if (mouse.windowId == focused.windowId) { return NO; }
-    if (!query.focusFirst) {
-        // Do not raise a parent over the child that is already focused, for
-        // instance a dialog belonging to the hovered window.
-        return !ARWindowContainedWithin(focused, mouse);
-    }
+
+    // A password prompt or another system dialog keeps the keyboard until it is
+    // dealt with. Hovering past it must not take the focus away.
+    if (focused.isSystemDialog) { return NO; }
+
+    // The focused window sitting inside the hovered one is what a dialog
+    // belonging to it looks like, and raising the parent over its own dialog
+    // would be wrong. Across applications the same geometry means nothing: a
+    // small window parked on top of a big one, a calculator over an editor,
+    // must not make the whole window underneath unhoverable.
+    BOOL sameApp = mouse.pid == focused.pid;
+    BOOL wouldCoverOwnDialog = sameApp && ARWindowContainedWithin(focused, mouse);
+
+    if (!query.focusFirst) { return !wouldCoverOwnDialog; }
     return ARIsMainWindow(focused, query.quirks) &&
-           ((mouse.pid != focused.pid && !candidate.appRaisesOnFocus) ||
-            !ARWindowContainedWithin(focused, mouse));
+           ((!sameApp && !candidate.appRaisesOnFocus) || !wouldCoverOwnDialog);
 }
 
 ARRaiseDecision ARDecideRaise(ARRaiseQuery *query) {

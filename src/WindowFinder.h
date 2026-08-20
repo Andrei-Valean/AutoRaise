@@ -47,6 +47,8 @@ BOOL ARApplicationHasMainWindow(pid_t pid);
 AXUIElementRef _Nullable ARCopyActivatedWindow(pid_t pid);
 
 CGWindowID ARWindowID(AXUIElementRef window);
+// The window frame in CoreGraphics coordinates.
+BOOL ARWindowFrame(AXUIElementRef window, CGRect *frame);
 CGPoint ARWarpPointForWindow(AXUIElementRef window, float warpX, float warpY);
 
 // Dock and Mission Control both take over the screen; raising underneath them

@@ -182,6 +182,10 @@ CGWindowID ARWindowID(AXUIElementRef window) {
     return windowId;
 }
 
+BOOL ARWindowFrame(AXUIElementRef window, CGRect *frame) {
+    return ARCopyRect(window, frame);
+}
+
 CGPoint ARWarpPointForWindow(AXUIElementRef window, float warpX, float warpY) {
     CGRect frame;
     if (!ARCopyRect(window, &frame)) { return CGPointZero; }
@@ -471,6 +475,7 @@ ARWindow *ARGatherWindow(AXUIElementRef window, BOOL includeGeometry) {
     NSString *subrole = ARCopyStringAttribute(window, kAXSubroleAttribute);
     if (subrole) {
         facts.isDialog = [subrole isEqualToString: (__bridge NSString *) kAXDialogSubrole];
+        facts.isSystemDialog = [subrole isEqualToString: (__bridge NSString *) kAXSystemDialogSubrole];
         facts.isFloating =
             [subrole isEqualToString: (__bridge NSString *) kAXFloatingWindowSubrole] ||
             [subrole isEqualToString: (__bridge NSString *) kAXSystemFloatingWindowSubrole] ||
