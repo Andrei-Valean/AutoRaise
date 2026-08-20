@@ -168,6 +168,7 @@ static void window_manager_focus_window_without_raise(
     AXObserverRef _ringObserver;
     CFRunLoopSourceRef _ringObserverSource;
     AXUIElementRef _ringWindow;
+    pid_t _ringPid;
     AXUIElementRef _previousFinderWindow;
 
     NSTimer *_fastTimer;
@@ -550,6 +551,7 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
     if (_ringWindow != window) {
         [self stopFollowingRingedWindow];
         _ringWindow = (AXUIElementRef) CFRetain(window);
+        AXUIElementGetPid(window, &_ringPid);
         pid_t pid = 0;
         if (AXUIElementGetPid(window, &pid) == kAXErrorSuccess &&
             AXObserverCreate(pid, ARRingObserverCallback, &_ringObserver) == kAXErrorSuccess) {
@@ -593,6 +595,7 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
 
 - (void)hideFocusRing {
     [_focusRing hide];
+    _ringPid = 0;
     [self stopFollowingRingedWindow];
 }
 
@@ -605,11 +608,14 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
         name: NSWorkspaceActiveSpaceDidChangeNotification object: nil];
     [center addObserver: self selector: @selector(applicationLaunched:)
         name: NSWorkspaceDidLaunchApplicationNotification object: nil];
-    if (_config.warpMouse) {
-        [center addObserver: self selector: @selector(appActivated:)
-            name: NSWorkspaceDidActivateApplicationNotification object: nil];
-        if (_config.verbose) { NSLog(@"Registered app activated selector"); }
-    }
+    // Always: the focus ring has to know when another application takes over,
+    // even when the mouse warping that used to be the only reason for this
+    // notification is switched off.
+    [center addObserver: self selector: @selector(appActivated:)
+        name: NSWorkspaceDidActivateApplicationNotification object: nil];
+    [center addObserver: self selector: @selector(applicationHidden:)
+        name: NSWorkspaceDidHideApplicationNotification object: nil];
+    if (_config.verbose && _config.warpMouse) { NSLog(@"Registered app activated selector"); }
 
     [[NSNotificationCenter defaultCenter] removeObserver: self];
     [[NSNotificationCenter defaultCenter] addObserver: self selector: @selector(screensChanged:)
@@ -618,6 +624,8 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
 
 - (void)spaceChanged:(NSNotification *)notification {
     if (_config.verbose) { NSLog(@"Space changed"); }
+    // The outlined window may not even be on this desktop.
+    [self hideFocusRing];
     _spaceHasChanged = YES;
     _havePoint = NO;
     // Deliberately stale: the first evaluation after a space change sees a move
@@ -637,9 +645,29 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
 }
 
 - (void)appActivated:(NSNotification *)notification {
+    // Whatever just came forward holds the keyboard now, so an outline around
+    // anything else is a lie.
+    [self validateFocusRing];
+    if (!_config.warpMouse) { return; }
     if (_config.verbose) { NSLog(@"App activated, waiting %0.3fs", ACTIVATE_DELAY_MS / 1000.0); }
     [self performSelector: @selector(onAppActivated) withObject: nil
         afterDelay: ACTIVATE_DELAY_MS / 1000.0];
+}
+
+- (void)applicationHidden:(NSNotification *)notification {
+    NSRunningApplication *app = notification.userInfo[NSWorkspaceApplicationKey];
+    if (app.processIdentifier == _ringPid) { [self hideFocusRing]; }
+}
+
+// The ring means "this window has the keyboard". The moment that stops being
+// true it has to go, however the focus moved.
+- (void)validateFocusRing {
+    if (!_focusRing.visible) { return; }
+    pid_t frontmost = [[NSWorkspace sharedWorkspace] frontmostApplication].processIdentifier;
+    if (frontmost != _ringPid) {
+        if (_config.verbose) { NSLog(@"Ring outlived its focus, hiding it"); }
+        [self hideFocusRing];
+    }
 }
 
 - (void)onAppActivated {
@@ -909,6 +937,8 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         return YES;
     }
 
+    [self validateFocusRing];
+
     if (!mouseMoved && !_delay.delayTicks && !_delay.raiseTimes) { return NO; }
 
     if ([self shouldAbortNow]) {
@@ -1089,6 +1119,8 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
 }
 
 - (void)openSettings {
+    // A settings window of our own means AutoRaise holds the keyboard.
+    [self hideFocusRing];
     if (!_settingsWindow) {
         _settingsWindow = [[ARSettingsWindowController alloc] initWithDelegate: self];
     } else {

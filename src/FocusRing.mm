@@ -118,8 +118,10 @@ BOOL ARFocusRingVerbose = NO;
         _panel.level = NSFloatingWindowLevel;
         _panel.releasedWhenClosed = NO;
         _panel.hidesOnDeactivate = NO;
-        _panel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
-                                    NSWindowCollectionBehaviorStationary |
+        // Follows to whichever desktop it is shown on, rather than joining all of
+        // them: a ring belongs to one window, and turning up on a desktop that
+        // window is not on was a bug.
+        _panel.collectionBehavior = NSWindowCollectionBehaviorMoveToActiveSpace |
                                     NSWindowCollectionBehaviorIgnoresCycle |
                                     NSWindowCollectionBehaviorFullScreenAuxiliary;
         _panel.accessibilitySubrole = NSAccessibilityUnknownSubrole;
@@ -173,10 +175,12 @@ BOOL ARFocusRingVerbose = NO;
         [_panel orderFront: nil];
         [self startPulsing];
         _clipTimer = [NSTimer scheduledTimerWithTimeInterval: AR_CLIP_REFRESH_SECONDS
-            target: self selector: @selector(refreshClip) userInfo: nil repeats: YES];
+            target: self selector: @selector(clipTimerFired:) userInfo: nil repeats: YES];
         _clipTimer.tolerance = AR_CLIP_REFRESH_SECONDS / 2;
     }
 }
+
+- (void)clipTimerFired:(NSTimer *)timer { [self refreshClip]; }
 
 // Works out which parts of the outlined window are hidden behind other windows,
 // and hands them to the view in its own coordinates.
