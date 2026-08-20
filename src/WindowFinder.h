@@ -42,6 +42,16 @@ ARWindow *ARGatherWindow(AXUIElementRef window, BOOL includeGeometry);
 AXUIElementRef _Nullable ARCopyFocusedWindow(pid_t pid);
 BOOL ARApplicationHasMainWindow(pid_t pid);
 
+// YES when the application has a panel on screen: a colour picker, an inspector
+// palette, a find bar, anything AppKit puts above the normal windows. Those hide
+// themselves the moment their application stops being frontmost, so taking the
+// keyboard away from such an app makes the panel disappear. The answer is cached
+// for a moment, because it costs a listing of every window on screen.
+//
+// ignoring leaves one window out of the count, which is how AutoRaise's own
+// focus ring avoids being mistaken for a panel of its own.
+BOOL ARApplicationHasPanel(pid_t pid, CGWindowID ignoring);
+
 // The main (or focused) window of an application, retained, or NULL. Used by
 // the mouse warping code on task switch.
 AXUIElementRef _Nullable ARCopyActivatedWindow(pid_t pid);

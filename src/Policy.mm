@@ -133,6 +133,11 @@ BOOL ARDecideAgainstFocused(ARRaiseQuery *query, ARRaiseDecision candidate) {
     // dealt with. Hovering past it must not take the focus away.
     if (focused.isSystemDialog) { return NO; }
 
+    // Nor must it close a panel. A colour picker, an inspector or a find bar
+    // disappears as soon as its application stops being frontmost, so drifting
+    // off one of them would dismiss the thing being used.
+    if (query.frontmostHasPanel && mouse.pid != focused.pid) { return NO; }
+
     // The focused window sitting inside the hovered one is what a dialog
     // belonging to it looks like, and raising the parent over its own dialog
     // would be wrong. Across applications the same geometry means nothing: a

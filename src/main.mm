@@ -962,6 +962,9 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
 
     AXUIElementRef _focusedWindow = NULL;
     if (decision.needsRaise) {
+        // Only worth asking when the keyboard would actually change hands.
+        query.frontmostHasPanel = _config.panelsKeepFocus && mouse.pid != frontmostPid &&
+                                  ARApplicationHasPanel(frontmostPid, _focusRing.windowId);
         _focusedWindow = ARCopyFocusedWindow(frontmostPid);
         if (_focusedWindow) {
             query.focusedWindow = ARGatherWindow(_focusedWindow, YES);
@@ -1014,7 +1017,23 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
             [self raiseAndActivate: _mouseWindow pid: mouse.pid];
             return;
         }
-        if (!decision.appRaisesOnFocus || _config.raiseAfterFocusTicks == 0) {
+
+        // Some applications, browsers in particular, bring themselves to the
+        // front the instant they are focused. Focusing one of those is a raise
+        // whether or not a raise was asked for, so it waits for the raise delay
+        // instead, and never happens at all when nothing should be raised.
+        if (decision.appRaisesOnFocus) {
+            if (_config.raiseAfterFocusTicks == 0) {
+                if (_config.verbose) {
+                    NSLog(@"%@ raises itself when focused, leaving it alone", mouse.appName);
+                }
+                return;
+            }
+            if (_config.verbose) {
+                NSLog(@"%@ raises itself when focused, waiting for the raise delay",
+                      mouse.appName);
+            }
+        } else {
             window_manager_focus_window_without_raise(&mouseWindowPsn, mouse.windowId,
                 _focusedWindowPsn, focused.windowId, _config.verbose);
         }
@@ -1022,7 +1041,9 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         if (_lastFocusedWindow) { CFRelease(_lastFocusedWindow); }
         _lastFocusedWindow = (AXUIElementRef) CFRetain(_mouseWindow);
         _lastFocusedWindowPid = mouse.pid;
-        [self showFocusRingAround: _mouseWindow];
+        // No ring for a window that was not focused: it would promise a
+        // keyboard it does not have.
+        if (!decision.appRaisesOnFocus) { [self showFocusRingAround: _mouseWindow]; }
         if (_config.raiseAfterFocusTicks) { [self windowFocused: _lastFocusedWindow]; }
         return;
     }

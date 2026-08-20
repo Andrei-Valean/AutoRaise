@@ -24,6 +24,8 @@ extern BOOL ARFocusRingVerbose;
 @property (nonatomic) ARColor color;
 @property (nonatomic) ARRingStyle style;
 @property (nonatomic, readonly) BOOL visible;
+// The ring's own window, so it can be told apart from real panels.
+@property (nonatomic, readonly) CGWindowID windowId;
 
 // frame is the window frame in CoreGraphics coordinates, the same ones the
 // accessibility API reports. windowId is the window being outlined: the ring is

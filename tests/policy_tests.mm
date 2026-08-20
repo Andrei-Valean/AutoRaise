@@ -238,6 +238,19 @@ static void testDecisions(void) {
     foreignFocusFirst.focusedWindow.frame = CGRectMake(150, 150, 100, 100);
     CHECK(ARDecideRaise(foreignFocusFirst).needsRaise);
 
+    CASE("an app with a panel open keeps the keyboard");
+    ARRaiseQuery *panel = makeQuery();
+    panel.frontmostHasPanel = YES;
+    CHECK(!ARDecideRaise(panel).needsRaise);
+    panel.focusFirst = YES;
+    CHECK(!ARDecideRaise(panel).needsRaise);
+
+    CASE("but its own windows are still reachable");
+    ARRaiseQuery *samePanel = makeQuery();
+    samePanel.frontmostHasPanel = YES;
+    samePanel.mouseWindow.pid = samePanel.focusedWindow.pid;
+    CHECK(ARDecideRaise(samePanel).needsRaise);
+
     CASE("a system dialog never loses the keyboard");
     ARRaiseQuery *prompt = makeQuery();
     prompt.focusedWindow.isSystemDialog = YES;
@@ -486,6 +499,10 @@ static void testConfigValues(void) {
     ARConfig *bogus = ARConfigFromValues(@{@"disableKey": @"banana"}, nil);
     CHECK_EQ_INT(bogus.disableKey, 0);
     CHECK_EQ_INT(bogus.warnings.count, 1);
+
+    CASE("panels are left alone unless asked otherwise");
+    CHECK(ARConfigFromValues(@{}, nil).panelsKeepFocus);
+    CHECK(!ARConfigFromValues(@{@"panelsKeepFocus": @"false"}, nil).panelsKeepFocus);
 
     CASE("everything that used to be a compile time flag has a default");
     config = ARConfigFromValues(@{}, nil);

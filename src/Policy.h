@@ -60,6 +60,9 @@ typedef struct {
 @property (nonatomic, strong) ARWindow *focusedWindow;   // known == NO: frontmost app has none
 @property (nonatomic) BOOL mouseWindowPresent;           // window was not destroyed under us
 @property (nonatomic) BOOL frontmostHasMainWindow;
+// The app in front has a panel on screen that would vanish if it lost the
+// keyboard, and the user asked for those to be left alone.
+@property (nonatomic) BOOL frontmostHasPanel;
 @property (nonatomic) BOOL invertIgnoreApps;
 @property (nonatomic) pid_t ownPid;          // AutoRaise never raises itself
 @property (nonatomic) BOOL focusFirst;

@@ -55,6 +55,7 @@ comments, ordering and any settings a future version adds are left alone.
 
     # Sensitivity
     requireMouseStop=true    # wait for the mouse to stop before acting
+    panelsKeepFocus=true     # leave an app alone while it has a panel open
     mouseDelta=0.0           # ignore movements smaller than this
     ignoreSpaceChanged=false # do not act right after a space change
 
@@ -135,6 +136,37 @@ Hovering a window hands it the keyboard, whatever else is on screen:
   than appearing to ignore you.
 - A floating window, which cannot be focused without being raised, is raised instead of skipped.
 - A system dialog, a password prompt for instance, never loses the keyboard to a hover.
+
+### Panels
+
+A colour picker, an inspector, a find bar: AppKit puts these above the normal windows and hides them
+the moment their application stops being frontmost. Drifting off one of them used to dismiss the
+thing you were in the middle of using, because hovering the window underneath took the keyboard away.
+
+While the application in front has a panel on screen, hovering another application changes nothing.
+Its own windows are still reachable, so you can move between the panel and the window it belongs to.
+Set `panelsKeepFocus=false` to turn that off.
+
+Popovers and menus are a different matter: a popover is not in the accessibility window list at all,
+and a dropdown inside a web page is not a window in any sense, so AutoRaise cannot see either of
+them. Those still close when the focus moves on.
+
+### Applications that raise themselves
+
+Some applications, browsers in particular, come to the front the instant they are focused. Focusing
+one without raising it is not something AutoRaise can do, whatever it asks the system for: the
+application does the raising itself.
+
+So they are treated as raise-only. In "focus, then raise" they are left alone until the raise delay
+elapses, and in "only focus", where nothing should ever be raised, they are left alone entirely.
+Hovering one of them does nothing rather than yanking it in front of what you were reading.
+
+The list lives in the app quirks, so it is yours to change:
+
+    ./AutoRaise -dumpQuirks | grep -A6 appsRaisingOnFocus
+
+Take an application out of `appsRaisingOnFocus` in `~/.config/AutoRaise/quirks.json` and hovering it
+will focus it again, raise and all. Put one in when you find another that behaves this way.
 
 ### App quirks
 

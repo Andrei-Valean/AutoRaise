@@ -472,6 +472,11 @@ static ARRaiseMode ARModeForConfig(ARConfig *config) {
         on: config.requireMouseStop];
     stop.onChange = ^(BOOL on) { [weakSelf setBool: @"requireMouseStop" to: on]; };
 
+    ARToggleRow *panels = [[ARToggleRow alloc] initWithTitle: @"Leave panels alone"
+        subtitle: @"Do not take the keyboard from an app while it has a panel open"
+        on: config.panelsKeepFocus];
+    panels.onChange = ^(BOOL on) { [weakSelf setBool: @"panelsKeepFocus" to: on]; };
+
     ARToggleRow *space = [[ARToggleRow alloc] initWithTitle: @"Ignore desktop switches"
         subtitle: @"Do not raise anything right after moving to another desktop"
         on: config.ignoreSpaceChanged];
@@ -488,8 +493,10 @@ static ARRaiseMode ARModeForConfig(ARConfig *config) {
         [weakSelf set: @"mouseDelta" to: [NSString stringWithFormat: @"%.0f", value]];
     };
 
-    [self addCard: @[stop, space, delta]];
-    [self addFootnote: @"Raise a shaky hand's threshold if windows come forward while you are "
+    [self addCard: @[stop, panels, space, delta]];
+    [self addFootnote: @"A colour picker, an inspector or a find bar disappears when its app "
+                       "stops being frontmost, so hovering away from one would dismiss it. "
+                       "Raise a shaky hand's threshold if windows come forward while you are "
                        "only passing over them."];
 
     // Focus without raise is invisible unless something says which window is
