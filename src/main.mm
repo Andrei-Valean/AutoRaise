@@ -154,6 +154,9 @@ static void window_manager_focus_window_without_raise(
     BOOL _havePoint;
     BOOL _propagateMouseMoved;
     CGEventFlags _flags;
+    NSTimeInterval _lastKeystroke;      // typing is intent too, of a different kind
+    AXUIElementRef _previousWindow;     // where the keyboard was before this
+    pid_t _previousWindowPid;
 
     // How the pointer is moving, which is what decides when to act.
     ARIntentReader *_intent;
@@ -239,6 +242,7 @@ static ARController *controller = nil;
 // Anything that must be undone before the process goes away, however it goes.
 - (void)shutDown {
     [[ARStats shared] flush: YES];
+    [self rememberPreviousWindow: NULL pid: 0];
     [self hideFocusRing];
     [self restoreCursorScale];
     [_menuBar remove];
@@ -502,6 +506,7 @@ static CGEventRef ARTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
 
     if (type != kCGEventKeyDown && type != kCGEventFlagsChanged) { return; }
 
+    if (type == kCGEventKeyDown) { _lastKeystroke = [NSDate timeIntervalSinceReferenceDate]; }
     _flags = CGEventGetFlags(event);
     BOOL commandPressed = (_flags & TASK_SWITCHER_MODIFIER_KEY) == TASK_SWITCHER_MODIFIER_KEY;
     static BOOL commandTabPressed = NO;
@@ -553,7 +558,34 @@ static BOOL ARShortcutMatches(NSString *configured, CGEventRef event) {
         [self raiseRingedWindow];
         return YES;
     }
+    if (ARShortcutMatches(_config.returnShortcut, event)) {
+        [self returnToPreviousWindow];
+        return YES;
+    }
     return NO;
+}
+
+// Following the pointer costs you the idea of where you just were. This gives it
+// back: the window the keyboard was on before the current one.
+- (void)returnToPreviousWindow {
+    if (!_previousWindow) {
+        if (_config.verbose) { NSLog(@"No previous window to go back to"); }
+        return;
+    }
+    if (_config.verbose) { NSLog(@"Back to the previous window"); }
+    AXUIElementRef going = (AXUIElementRef) CFRetain(_previousWindow);
+    pid_t goingPid = _previousWindowPid;
+    // Swap, so the shortcut toggles between two windows.
+    [self rememberPreviousWindow: _lastFocusedWindow pid: _lastFocusedWindowPid];
+    [self raiseAndActivate: going pid: goingPid];
+    [[ARStats shared] recordShortcutRaise];
+    CFRelease(going);
+}
+
+- (void)rememberPreviousWindow:(AXUIElementRef)window pid:(pid_t)pid {
+    if (_previousWindow) { CFRelease(_previousWindow); _previousWindow = NULL; }
+    if (window) { _previousWindow = (AXUIElementRef) CFRetain(window); }
+    _previousWindowPid = pid;
 }
 
 //------------------------------------------------ focus ring ----------------------------------------------
@@ -755,6 +787,12 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
 #pragma clang diagnostic pop
     } else {
         [[NSRunningApplication runningApplicationWithProcessIdentifier: pid] activateWithOptions: 0];
+    }
+}
+
+- (void)noteFocusMovedTo:(AXUIElementRef)window pid:(pid_t)pid {
+    if (_lastFocusedWindow && _lastFocusedWindowPid != pid) {
+        [self rememberPreviousWindow: _lastFocusedWindow pid: _lastFocusedWindowPid];
     }
 }
 
@@ -980,6 +1018,18 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         }
     }
 
+    // Typing is a claim on the keyboard. Taking it away mid-sentence loses the
+    // next few characters, so a hover waits until the typing pauses.
+    if (_config.typingGraceMillis > 0 && _lastKeystroke > 0) {
+        NSTimeInterval since = [NSDate timeIntervalSinceReferenceDate] - _lastKeystroke;
+        if (since < _config.typingGraceMillis / 1000.0) {
+            if (_config.verbose && arrived) {
+                NSLog(@"Still typing (%.0fms ago), leaving the keyboard alone", since * 1000);
+            }
+            return YES;
+        }
+    }
+
     // Still travelling: whatever is under the pointer on the way is not what
     // was being aimed at.
     if (!intent.settled) {
@@ -1121,6 +1171,7 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         window_manager_focus_window_without_raise(&mouseWindowPsn, mouse.windowId,
             _focusedWindowPsn, focused.windowId, makeKeyWindow, _config.verbose);
 
+        [self noteFocusMovedTo: _mouseWindow pid: mouse.pid];
         if (_lastFocusedWindow) { CFRelease(_lastFocusedWindow); }
         _lastFocusedWindow = (AXUIElementRef) CFRetain(_mouseWindow);
         _lastFocusedWindowPid = mouse.pid;
@@ -1131,6 +1182,10 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         return ARSavedActionFocused;
     }
 #endif
+    [self noteFocusMovedTo: _mouseWindow pid: mouse.pid];
+    if (_lastFocusedWindow) { CFRelease(_lastFocusedWindow); }
+    _lastFocusedWindow = (AXUIElementRef) CFRetain(_mouseWindow);
+    _lastFocusedWindowPid = mouse.pid;
     [self raiseAndActivate: _mouseWindow pid: mouse.pid];
     return ARSavedActionRaised;
 }

@@ -67,6 +67,7 @@ comments, ordering and any settings a future version adds are left alone.
 
     selfRaisingApps=focus    # focus, quiet or skip; see below
     ignoreSpaceChanged=false # do not act right after a space change
+    typingGrace=700          # ms after a keystroke to leave the keyboard alone
 
     # Suspending
     disableKey=control       # control, option, command, shift or disabled
@@ -103,6 +104,7 @@ comments, ordering and any settings a future version adds are left alone.
     enabled=true
     toggleShortcut=control-option-J   # pause and resume from anywhere
     raiseShortcut=control-option-R    # raise the outlined window
+    returnShortcut=control-option-B   # back to the window you came from
 
 The same names work as arguments, and `-key value` and `-key=value` are both accepted:
 
@@ -113,6 +115,16 @@ number. Run `./AutoRaise -help` for the full list.
 
 Arguments beat the file, which would otherwise make a setting in the window look broken. Changing
 that setting in the window drops the argument, so the window always wins from then on.
+
+### Typing is intent too
+
+While you are typing you are not asking to change windows, but a nudge of the trackpad used to be
+enough to move the keyboard somewhere else and lose the next few characters. Hovering now waits
+`typingGrace` milliseconds after your last keystroke, 700 by default, and `typingGrace=0` turns that
+off.
+
+Following the pointer also costs you the idea of where you just were, so `returnShortcut` goes back
+to the window the keyboard was on before this one. Press it twice and you are back where you started.
 
 ### There is no delay to tune
 

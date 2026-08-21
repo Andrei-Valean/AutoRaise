@@ -97,6 +97,9 @@ NSString *ARRingPlacementDescribe(ARRingPlacement placement);
 
 @property (nonatomic) BOOL altTaskSwitcher;
 @property (nonatomic) BOOL ignoreSpaceChanged;
+// While you are typing you are not asking to change windows. Milliseconds after
+// the last keystroke during which hovering leaves the keyboard alone.
+@property (nonatomic) int typingGraceMillis;
 @property (nonatomic) BOOL invertDisableKey;
 @property (nonatomic) BOOL invertIgnoreApps;
 
@@ -115,6 +118,8 @@ NSString *ARRingPlacementDescribe(ARRingPlacement placement);
 @property (nonatomic, copy, nullable) NSString *toggleShortcut;
 // Raises the window that is focused but not raised, when focus-first is on.
 @property (nonatomic, copy, nullable) NSString *raiseShortcut;
+// Goes back to the window the keyboard was on before this one.
+@property (nonatomic, copy, nullable) NSString *returnShortcut;
 
 // The outline drawn around a window that has the keyboard but was not raised.
 @property (nonatomic) BOOL focusRing;

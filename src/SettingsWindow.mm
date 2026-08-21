@@ -451,6 +451,18 @@ static NSColor *ARPageTint(ARPage page) {
                            "as experimental: a macOS update can take it away."];
     }
 
+    ARSliderRow *typing = [[ARSliderRow alloc] initWithTitle: @"While typing, wait"
+        min: 0 max: 2000 value: config.typingGraceMillis];
+    typing.snapsToIntegers = YES;
+    typing.format = ^NSString *(double value) {
+        if (value == 0) { return @"Do not wait"; }
+        return value >= 1000 ? [NSString stringWithFormat: @"%.1f s after a keystroke", value / 1000]
+                             : [NSString stringWithFormat: @"%.0f ms after a keystroke", value];
+    };
+    typing.onCommit = ^(double value) {
+        [weakSelf set: @"typingGrace" to: [NSString stringWithFormat: @"%.0f", value]];
+    };
+
     ARToggleRow *space = [[ARToggleRow alloc] initWithTitle: @"Ignore desktop switches"
         subtitle: @"Do not act right after moving to another desktop"
         on: config.ignoreSpaceChanged];
@@ -465,7 +477,7 @@ static NSColor *ARPageTint(ARPage page) {
         [weakSelf set: @"selfRaisingApps" to: selfRaisingValues[index]];
     };
 
-    [self addCard: @[space, selfRaising]];
+    [self addCard: @[typing, space, selfRaising]];
     [self addFootnote: @"Focusing a browser quietly keeps it where it is, but the browser then "
                        "decides which of its own windows takes the keyboard, so it suits one "
                        "window per screen better than several. \"AutoRaise -dumpQuirks\" lists "
@@ -493,6 +505,15 @@ static NSColor *ARPageTint(ARPage page) {
         subtitle: config.focusRingColor.followsAccent ? @"Following the system accent colour" : nil
         accessory: well];
 
+    ARShortcutField *returnField = [[ARShortcutField alloc] initWithFrame: NSZeroRect];
+    returnField.shortcut = config.returnShortcut;
+    returnField.onChange = ^(NSString *shortcut) {
+        [weakSelf set: @"returnShortcut" to: shortcut];
+    };
+    ARRow *returnRow = [[ARRow alloc] initWithTitle: @"Back to the previous window"
+        subtitle: @"Whichever window had the keyboard before this one"
+        accessory: returnField];
+
     ARShortcutField *raiseField = [[ARShortcutField alloc] initWithFrame: NSZeroRect];
     raiseField.shortcut = config.raiseShortcut;
     raiseField.onChange = ^(NSString *shortcut) {
@@ -501,7 +522,7 @@ static NSColor *ARPageTint(ARPage page) {
     ARRow *raiseRow = [[ARRow alloc] initWithTitle: @"Raise it with"
         subtitle: @"Brings the outlined window to the front" accessory: raiseField];
 
-    [self addCard: @[ring, color, raiseRow]];
+    [self addCard: @[ring, color, raiseRow, returnRow]];
     BOOL ringUsable = config.focusFirst;
     [color setRowEnabled: ringUsable && config.focusRing];
     [raiseRow setRowEnabled: ringUsable];

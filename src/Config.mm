@@ -22,6 +22,8 @@ static NSString *const kWarpY = @"warpY";
 static NSString *const kScale = @"scale";
 static NSString *const kAltTaskSwitcher = @"altTaskSwitcher";
 static NSString *const kIgnoreSpaceChanged = @"ignoreSpaceChanged";
+static NSString *const kTypingGrace = @"typingGrace";
+static NSString *const kReturnShortcut = @"returnShortcut";
 static NSString *const kInvertDisableKey = @"invertDisableKey";
 static NSString *const kInvertIgnoreApps = @"invertIgnoreApps";
 static NSString *const kIgnoreApps = @"ignoreApps";
@@ -62,6 +64,7 @@ static NSArray<NSString *> *ARConfigKeys(void) {
              kAltTaskSwitcher, kRequireMouseStop, kIgnoreSpaceChanged, kInvertDisableKey,
              kInvertIgnoreApps, kIgnoreApps, kIgnoreTitles, kStayFocusedBundleIds,
              kDisableKey, kMouseDelta, kLegacyActivation, kWindowServerHitTest,
+             kTypingGrace, kReturnShortcut,
              kMenuBarIcon, kLiveReload, kVerbose, kEnabled, kToggleShortcut,
              kSelfRaisingApps, kFocusRing, kFocusRingColor, kFocusRingStyle, kFocusRingWidth,
              kFocusRingGlow, kFocusRingRadius, kFocusRingOpacity, kFocusRingPulse,
@@ -467,6 +470,8 @@ ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
 
     config.altTaskSwitcher = ARBool(values, kAltTaskSwitcher, NO);
     config.ignoreSpaceChanged = ARBool(values, kIgnoreSpaceChanged, NO);
+    config.typingGraceMillis = values[kTypingGrace] ? [values[kTypingGrace] intValue] : 700;
+    if (config.typingGraceMillis < 0) { config.typingGraceMillis = 0; }
     config.invertDisableKey = ARBool(values, kInvertDisableKey, NO);
     config.invertIgnoreApps = ARBool(values, kInvertIgnoreApps, NO);
     config.legacyActivation = ARBool(values, kLegacyActivation, NO);
@@ -476,7 +481,7 @@ ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
     config.verbose = ARBool(values, kVerbose, NO);
     config.enabled = ARBool(values, kEnabled, YES);
 
-    for (NSString *key in @[kToggleShortcut, kRaiseShortcut]) {
+    for (NSString *key in @[kToggleShortcut, kRaiseShortcut, kReturnShortcut]) {
         NSString *shortcut = values[key];
         if (!shortcut.length || [shortcut isEqualToString: @"none"]) { continue; }
         ARShortcut parsed = ARShortcutParse(shortcut);
@@ -487,8 +492,10 @@ ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
         }
         if ([key isEqualToString: kToggleShortcut]) {
             config.toggleShortcut = ARShortcutDescribe(parsed);
-        } else {
+        } else if ([key isEqualToString: kRaiseShortcut]) {
             config.raiseShortcut = ARShortcutDescribe(parsed);
+        } else {
+            config.returnShortcut = ARShortcutDescribe(parsed);
         }
     }
 
@@ -671,9 +678,14 @@ NSString *ARConfigTemplate(void) {
             "focusRingPulse=1.1        # seconds per breath, 0 to hold steady\n"
             "focusRingSpread=0.6       # bars: how much of the edge they cover\n"
             "focusRingFalloff=0.7      # bars: 0 ends abruptly, 1 fades the whole way\n"
+            "# While you are typing you are not asking to change windows. How long\n"
+            "# after the last keystroke hovering leaves the keyboard alone.\n"
+            "typingGrace=700\n"
+            "\n"
             "# Shortcuts, for example control-option-J. Leave out for none.\n"
             "#toggleShortcut=none\n"
-            "#raiseShortcut=none\n";
+            "#raiseShortcut=none\n"
+            "#returnShortcut=none     # back to the window you came from\n";
 }
 
 NSString *ARConfigUsage(void) {
@@ -703,6 +715,8 @@ NSString *ARConfigUsage(void) {
             "  -focusRingOpacity <1.0> -focusRingPulse <1.1>\n"
             "  -toggleShortcut <control-option-J>    pause and resume from anywhere\n"
             "  -raiseShortcut <control-option-K>     raise the outlined window\n"
+            "  -returnShortcut <control-option-B>    back to the previous window\n"
+            "  -typingGrace <700>                    ms after a keystroke to leave focus alone\n"
             "  -verbose <true|false>\n"
             "  -config <path>                        use this file instead of the default\n"
             "  -dumpQuirks                           print the built-in app quirks\n"

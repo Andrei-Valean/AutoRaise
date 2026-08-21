@@ -721,11 +721,18 @@ static void testColors(void) {
     CHECK_EQ_INT(ARConfigFromValues(@{@"focusRingPulse": @"0"}, nil).focusRingStyle.pulseSeconds, 0);
     CHECK(ARConfigFromValues(@{@"focusRingPulse": @"0.01"}, nil).focusRingStyle.pulseSeconds >= 0.2);
 
-    CASE("the two shortcuts are kept apart");
+    CASE("the three shortcuts are kept apart");
     config = ARConfigFromValues(@{@"toggleShortcut": @"control-option-J",
-                                  @"raiseShortcut": @"control-option-K"}, nil);
+                                  @"raiseShortcut": @"control-option-K",
+                                  @"returnShortcut": @"control-option-B"}, nil);
     CHECK_EQ_STR(config.toggleShortcut, @"control-option-J");
     CHECK_EQ_STR(config.raiseShortcut, @"control-option-K");
+    CHECK_EQ_STR(config.returnShortcut, @"control-option-B");
+
+    CASE("typing holds the keyboard for a moment by default");
+    CHECK_EQ_INT(ARConfigFromValues(@{}, nil).typingGraceMillis, 700);
+    CHECK_EQ_INT(ARConfigFromValues(@{@"typingGrace": @"0"}, nil).typingGraceMillis, 0);
+    CHECK_EQ_INT(ARConfigFromValues(@{@"typingGrace": @"-5"}, nil).typingGraceMillis, 0);
 }
 
 //------------------------------------------------ shortcuts -----------------------------------------------
