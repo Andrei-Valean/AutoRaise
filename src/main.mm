@@ -44,6 +44,10 @@
 #define SCALE_DURATION_MS (SCALE_DELAY_MS + 600) // and when it stops
 #define TASK_SWITCHER_MODIFIER_KEY kCGEventFlagMaskCommand
 #define PERMISSION_RETRY_SECONDS 2.0
+// How often to look while the pointer is moving, and the idle safety net. These
+// used to be settings, which made people tune an implementation detail.
+#define EVALUATE_MILLIS 20
+#define HEARTBEAT_MILLIS 500
 
 // How many quiet evaluations before the fast timer stands down and the
 // heartbeat takes over again.
@@ -151,7 +155,12 @@ static void window_manager_focus_window_without_raise(
     BOOL _propagateMouseMoved;
     CGEventFlags _flags;
 
-    // Delay and repeat bookkeeping, see Policy.h.
+    // How the pointer is moving, which is what decides when to act.
+    ARIntentReader *_intent;
+    BOOL _arrived;              // latched: arrival is announced on one sample only
+    BOOL _wasTravelling;        // for saying so once rather than every evaluation
+
+    // Repeat bookkeeping, see Policy.h.
     ARDelayState _delay;
     int _idleTicks;
     int _ignoreTicks;
@@ -197,6 +206,7 @@ static ARController *controller = nil;
     if ((self = [super init])) {
         _config = config;
         _enabled = config.enabled;
+        _intent = [[ARIntentReader alloc] initWithTuning: config.tuning];
         _delay = ARResetDelay();
         _previousWindowId = kCGNullWindowID;
         _lastDestroyedWindowId = kCGNullWindowID;
@@ -245,9 +255,7 @@ static ARController *controller = nil;
 //------------------------------------------------ settings ------------------------------------------------
 
 - (void)applyConfig:(ARConfig *)config {
-    BOOL timingChanged = config.pollMillis != _config.pollMillis ||
-                         config.heartbeatMillis != _config.heartbeatMillis ||
-                         config.primaryDelayTicks != _config.primaryDelayTicks;
+    BOOL timingChanged = config.mode != _config.mode;
     BOOL warpChanged = config.warpMouse != _config.warpMouse;
     BOOL iconChanged = config.menuBarIcon != _config.menuBarIcon;
     _config = config;
@@ -255,6 +263,7 @@ static ARController *controller = nil;
     ARWindowFinderSetVerbose(config.verbose);
     ARFocusRingVerbose = config.verbose;
     _enabled = config.enabled;
+    _intent.tuning = config.tuning;
     _focusRing.color = config.focusRingColor;
     _focusRing.style = config.focusRingStyle;
     if (!config.focusRing || !config.focusFirst || !config.enabled) { [self hideFocusRing]; }
@@ -347,7 +356,9 @@ static ARController *controller = nil;
 // Nothing can ever be raised or focused when the primary delay is zero, so the
 // evaluation loop is not needed at all: only warping remains.
 - (BOOL)needsEvaluation {
-    return _config.primaryDelayTicks > 0;
+    // Warping only: nothing is ever raised or focused, so there is nothing to
+    // work out on each movement.
+    return _config.raises || _config.focusFirst;
 }
 
 - (void)startTimers {
@@ -366,20 +377,18 @@ static ARController *controller = nil;
 
     if (![self needsEvaluation]) { return; }
 
-    if (_config.heartbeatMillis) {
-        // The safety net for windows that appear, close or move under a mouse
-        // that is not moving. Generously coalesced: it is allowed to be late.
-        _heartbeatTimer = [NSTimer scheduledTimerWithTimeInterval: _config.heartbeatMillis / 1000.0
-            target: self selector: @selector(heartbeat:) userInfo: nil repeats: YES];
-        _heartbeatTimer.tolerance = _config.heartbeatMillis / 2000.0;
-    }
+    // The safety net for a pointer that stopped without the tap saying so, and
+    // for windows that move under it. Generously coalesced: it may be late.
+    _heartbeatTimer = [NSTimer scheduledTimerWithTimeInterval: HEARTBEAT_MILLIS / 1000.0
+        target: self selector: @selector(heartbeat:) userInfo: nil repeats: YES];
+    _heartbeatTimer.tolerance = HEARTBEAT_MILLIS / 2000.0;
 }
 
 - (void)wakeUp {
     if (![self needsEvaluation] || !_enabled) { return; }
     _idleTicks = 0;
     if (_fastTimer) { return; }
-    _fastTimer = [NSTimer scheduledTimerWithTimeInterval: _config.pollMillis / 1000.0
+    _fastTimer = [NSTimer scheduledTimerWithTimeInterval: EVALUATE_MILLIS / 1000.0
         target: self selector: @selector(fastTick:) userInfo: nil repeats: YES];
 }
 
@@ -400,6 +409,11 @@ static ARController *controller = nil;
 // slow re-read costs almost nothing and keeps those cases from getting stuck.
 - (void)heartbeat:(NSTimer *)timer {
     _havePoint = NO;
+    // No events since the last one means the pointer is parked, whatever the
+    // last speed reading was.
+    if ([_intent settleAtTime: [NSDate timeIntervalSinceReferenceDate]].arrived) {
+        _arrived = YES;
+    }
     if ([self evaluate]) { [self wakeUp]; }
 }
 
@@ -471,6 +485,9 @@ static CGEventRef ARTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
         // several times per frame, so this path stays as short as possible.
         _point = CGEventGetLocation(event);
         _havePoint = YES;
+        ARIntent intent = [_intent addPoint: _point
+            atTime: [NSDate timeIntervalSinceReferenceDate]];
+        if (intent.arrived) { _arrived = YES; }
         if (!_fastTimer) { [self wakeUp]; }
         else { _idleTicks = 0; }
         return;
@@ -644,6 +661,7 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
 
 - (void)spaceChanged:(NSNotification *)notification {
     if (_config.verbose) { NSLog(@"Space changed"); }
+    [_intent reset];
     // The outlined window may not even be on this desktop.
     [self hideFocusRing];
     _spaceHasChanged = YES;
@@ -707,7 +725,7 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
 }
 
 - (void)windowFocused:(AXUIElementRef)window {
-    NSTimeInterval delay = _config.raiseAfterFocusTicks * _config.pollMillis / 1000.0;
+    NSTimeInterval delay = _config.raiseAfterMillis / 1000.0;
     if (_config.verbose) { NSLog(@"Window focused, waiting %0.3fs", delay); }
     [self performSelector: @selector(onWindowFocused:)
         withObject: @((uint64_t) (uintptr_t) window) afterDelay: delay];
@@ -912,13 +930,16 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
     _evaluatedPoint = mousePoint;
     _havePoint = YES;
 
-    BOOL mouseMoved = fabs(delta.x) > _config.mouseDelta || fabs(delta.y) > _config.mouseDelta;
-    BOOL mouseStopped = !mouseMoved;
-    mouseMoved = mouseMoved || _propagateMouseMoved;
-    _propagateMouseMoved = NO;
-
-    // delayTicks == 0 disabled, 1 elapsed, n counting down.
-    if (_delay.delayTicks > 1) { _delay.delayTicks--; }
+    BOOL mouseMoved = fabs(delta.x) > 0 || fabs(delta.y) > 0;
+    ARIntent intent = _intent.intent;
+    if (_config.verbose && intent.settled == _wasTravelling) {
+        NSLog(@"%@ (%.0f pt/s)", intent.settled ? @"Pointer arrived" : @"Pointer travelling",
+              intent.speed);
+    }
+    _wasTravelling = !intent.settled;
+    // Arrival is announced once; the tap latched it, this consumes it.
+    BOOL arrived = _arrived;
+    _arrived = NO;
 
     if (@available(macOS 12.00, *)) {
         // Apply the correction before any early return below, so the corrected
@@ -946,21 +967,26 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         _appWasActivated = NO;
         return YES;
     } else if (_spaceHasChanged) {
-        // A space change takes priority over waiting for the delay.
-        if (mouseMoved) { return YES; }
-        if (!_config.ignoreSpaceChanged) {
-            _delay.raiseTimes = AR_RAISE_REPEATS;
-            _delay.delayTicks = 0;
+        // A desktop change takes priority: the pointer may not have moved at
+        // all and yet be over something new.
+        if (intent.settled) {
+            if (!_config.ignoreSpaceChanged) {
+                _delay.raiseTimes = AR_RAISE_REPEATS;
+                arrived = YES;
+            }
+            _spaceHasChanged = NO;
+        } else {
+            return YES;
         }
-        _spaceHasChanged = NO;
-    } else if (_config.requireMouseStop && !mouseStopped && mouseMoved) {
-        _delay.delayTicks = 0;
-        // Propagate the move so the delay restarts once the mouse settles.
-        _propagateMouseMoved = YES;
-        return YES;
     }
 
-    if (!mouseMoved && !_delay.delayTicks && !_delay.raiseTimes) { return NO; }
+    // Still travelling: whatever is under the pointer on the way is not what
+    // was being aimed at.
+    if (!intent.settled) {
+        _delay = ARResetDelay();
+        return YES;
+    }
+    if (!arrived && !_delay.raiseTimes) { return NO; }
 
     if ([self shouldAbortNow]) {
         if (_config.verbose) { NSLog(@"Abort focus/raise"); }
@@ -1027,7 +1053,7 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
 
     BOOL busy = NO;
     if (decision.needsRaise) {
-        ARDelayStep step = ARAdvanceDelay(_delay, _config.primaryDelayTicks);
+        ARDelayStep step = ARAdvanceDelay(_delay, 1);
         _delay = step.state;
         busy = YES;
         if (step.act) {
@@ -1099,7 +1125,9 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         _lastFocusedWindow = (AXUIElementRef) CFRetain(_mouseWindow);
         _lastFocusedWindowPid = mouse.pid;
         [self showFocusRingAround: _mouseWindow];
-        if (_config.raiseAfterFocusTicks) { [self windowFocused: _lastFocusedWindow]; }
+        if (_config.mode == ARHoverModeFocusThenRaise) {
+            [self windowFocused: _lastFocusedWindow];
+        }
         return ARSavedActionFocused;
     }
 #endif
@@ -1189,8 +1217,9 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         ARWindowServerHitTestAvailable() ? @"available" : @"missing"];
     [report appendFormat: @"Hit test: %@\n",
         _config.windowServerHitTest ? @"window server" : @"accessibility"];
-    [report appendFormat: @"Delay: %d ticks, focus delay: %d ticks, poll %dms\n",
-        _config.delayTicks, _config.focusDelayTicks, _config.pollMillis];
+    [report appendFormat: @"On hover: %@, eagerness %@, raise after %dms\n",
+        ARHoverModeDescribe(_config.mode), AREagernessDescribe(_config.eagerness),
+        _config.raiseAfterMillis];
     [report appendFormat: @"Focus first: %@\n", _config.focusFirst ? @"yes" : @"no"];
     [report appendFormat: @"Settings: %@\n", _config.sourcePath ?: @"defaults only"];
     [report appendFormat: @"Quirks: %@\n", ARQuirksUserFilePath() ?: @"built in only"];
@@ -1202,11 +1231,11 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
 - (NSString *)statusSummary {
     if (!AXIsProcessTrusted()) { return @"Accessibility access needed"; }
     if (!_enabled) { return @"Paused"; }
-    if (!_config.primaryDelayTicks) { return @"Warping only"; }
-    int millis = (_config.primaryDelayTicks - 1) * _config.pollMillis;
-    NSString *action = _config.focusFirst ? @"Focusing" : @"Raising";
-    if (!millis) { return [NSString stringWithFormat: @"%@ immediately", action]; }
-    return [NSString stringWithFormat: @"%@ after %dms", action, millis];
+    if (![self needsEvaluation]) { return @"Warping only"; }
+    NSString *action = _config.focusFirst
+        ? (_config.raises ? @"Focusing, then raising" : @"Focusing") : @"Raising";
+    return [NSString stringWithFormat: @"%@, %@", action,
+        AREagernessDescribe(_config.eagerness)];
 }
 
 @end
@@ -1357,10 +1386,10 @@ int main(int argc, const char *argv[]) {
         printf("\nAutoRaise %s by sbmpost(c) 2026, -help for usage\n\n", AUTORAISE_VERSION);
         printf("%s\n", ARConfigSummary(config).UTF8String);
 #if !SKYLIGHT_AVAILABLE
-        if (config.focusDelayTicks) {
-            printf("! focusDelay needs the SkyLight framework, which is missing: ignoring it\n\n");
-            config.focusDelayTicks = 0;
-            if (!config.delayTicks) { config.delayTicks = 1; }
+        if (config.focusFirst) {
+            printf("! focusing without raising needs the SkyLight framework, which is "
+                   "missing: raising instead\n\n");
+            config.mode = ARHoverModeRaise;
         }
 #endif
 

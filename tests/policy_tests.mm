@@ -438,43 +438,71 @@ static void testConfigParsing(void) {
 }
 
 static void testConfigValues(void) {
-    CASE("nothing configured means raise without delay");
+    CASE("nothing configured means raise, at a normal eagerness");
     ARConfig *config = ARConfigFromValues(@{}, nil);
-    CHECK_EQ_INT(config.delayTicks, 1);
-    CHECK_EQ_INT(config.focusDelayTicks, 0);
-    CHECK_EQ_INT(config.primaryDelayTicks, 1);
-    CHECK(!config.focusFirst);
-    CHECK_EQ_INT(config.pollMillis, 50);
-
-    CASE("delay 0 without a focus delay turns into focus only");
-    config = ARConfigFromValues(@{@"delay": @"0"}, nil);
-    CHECK_EQ_INT(config.focusDelayTicks, 1);
-    CHECK_EQ_INT(config.primaryDelayTicks, 1);
-
-    CASE("a focus delay makes the focus delay primary and raises later");
-    config = ARConfigFromValues(@{@"focusDelay": @"2", @"delay": @"4"}, nil);
-    CHECK_EQ_INT(config.primaryDelayTicks, 2);
-    CHECK_EQ_INT(config.raiseAfterFocusTicks, 4);
-    CHECK(config.focusFirst);
-
-    CASE("a focus delay on its own never raises");
-    config = ARConfigFromValues(@{@"focusDelay": @"2"}, nil);
-    CHECK_EQ_INT(config.raiseAfterFocusTicks, 0);
-    CHECK(config.focusFirst);
-
-    CASE("an explicit focusDelay of 0 leaves plain raising");
-    config = ARConfigFromValues(@{@"focusDelay": @"0"}, nil);
-    CHECK_EQ_INT(config.delayTicks, 1);
+    CHECK_EQ_INT(config.mode, ARHoverModeRaise);
+    CHECK_EQ_INT(config.eagerness, AREagernessNormal);
+    CHECK(config.raises);
     CHECK(!config.focusFirst);
 
-    CASE("a poll interval below the minimum is refused with a warning");
-    config = ARConfigFromValues(@{@"pollMillis": @"5"}, nil);
-    CHECK_EQ_INT(config.pollMillis, 50);
-    CHECK_EQ_INT(config.warnings.count, 1);
+    CASE("each mode is spellable and derives what the program needs");
+    config = ARConfigFromValues(@{@"mode": @"focus"}, nil);
+    CHECK(config.focusFirst);
+    CHECK(!config.raises);
+    config = ARConfigFromValues(@{@"mode": @"focusThenRaise"}, nil);
+    CHECK(config.focusFirst);
+    CHECK(config.raises);
+    CHECK_EQ_INT(config.raiseAfterMillis, 400);
+    config = ARConfigFromValues(@{@"mode": @"both", @"raiseAfter": @"1200"}, nil);
+    CHECK_EQ_INT(config.mode, ARHoverModeFocusThenRaise);
+    CHECK_EQ_INT(config.raiseAfterMillis, 1200);
+    ARConfig *bogusHover = ARConfigFromValues(@{@"mode": @"levitate"}, nil);
+    CHECK_EQ_INT(bogusHover.mode, ARHoverModeRaise);
+    CHECK_EQ_INT(bogusHover.warnings.count, 1);
 
-    CASE("the heartbeat never runs faster than the poll interval");
-    config = ARConfigFromValues(@{@"pollMillis": @"200", @"heartbeatMillis": @"100"}, nil);
-    CHECK_EQ_INT(config.heartbeatMillis, 200);
+    CASE("a mode survives a round trip");
+    for (NSString *name in @[@"raise", @"focusThenRaise", @"focus"]) {
+        ARHoverMode mode = ARHoverModeRaise;
+        CHECK(ARHoverModeParse(name, &mode));
+        CHECK_EQ_STR(ARHoverModeDescribe(mode), name);
+    }
+
+    CASE("eagerness picks the tuning the pointer is read against");
+    config = ARConfigFromValues(@{@"eagerness": @"relaxed"}, nil);
+    CHECK_EQ_INT(config.eagerness, AREagernessRelaxed);
+    CHECK(config.tuning.settleSpeed < ARTuningFor(AREagernessNormal).settleSpeed);
+    CHECK(config.tuning.confirm > ARTuningFor(AREagernessNormal).confirm);
+    ARConfig *bogusEager = ARConfigFromValues(@{@"eagerness": @"whenever"}, nil);
+    CHECK_EQ_INT(bogusEager.eagerness, AREagernessNormal);
+    CHECK_EQ_INT(bogusEager.warnings.count, 1);
+
+    CASE("a settings file written for the old timings still says what it meant");
+    // Focus only: the old way to say it was a raise delay of zero.
+    ARConfig *old = ARConfigFromValues(@{@"delay": @"0", @"focusDelay": @"1"}, nil);
+    CHECK_EQ_INT(old.mode, ARHoverModeFocus);
+    CHECK_EQ_INT(old.eagerness, AREagernessInstant);
+    CHECK_EQ_INT(old.warnings.count, 1);       // and it says so, once
+
+    // Focus, then raise after ten polling intervals of fifty milliseconds.
+    old = ARConfigFromValues(@{@"focusDelay": @"2", @"delay": @"11", @"pollMillis": @"50"}, nil);
+    CHECK_EQ_INT(old.mode, ARHoverModeFocusThenRaise);
+    CHECK_EQ_INT(old.raiseAfterMillis, 500);
+    CHECK_EQ_INT(old.eagerness, AREagernessQuick);   // it waited one interval
+
+    // A long raise delay was a patient person.
+    old = ARConfigFromValues(@{@"delay": @"8", @"pollMillis": @"50"}, nil);
+    CHECK_EQ_INT(old.mode, ARHoverModeRaise);
+    CHECK_EQ_INT(old.eagerness, AREagernessRelaxed);
+
+    // And not waiting for the pointer to stop was an impatient one.
+    old = ARConfigFromValues(@{@"delay": @"4", @"requireMouseStop": @"false"}, nil);
+    CHECK_EQ_INT(old.eagerness, AREagernessInstant);
+
+    CASE("a new setting beside an old one wins, without a fight");
+    old = ARConfigFromValues(@{@"delay": @"0", @"focusDelay": @"1", @"mode": @"raise",
+                               @"eagerness": @"relaxed"}, nil);
+    CHECK_EQ_INT(old.mode, ARHoverModeRaise);
+    CHECK_EQ_INT(old.eagerness, AREagernessRelaxed);
 
     CASE("warping needs both factors");
     CHECK(!ARConfigFromValues(@{@"warpX": @"0.5"}, nil).warpMouse);
@@ -512,7 +540,7 @@ static void testConfigValues(void) {
     CHECK(config.windowServerHitTest);
     CHECK(config.menuBarIcon);
     CHECK(config.liveReload);
-    CHECK(config.requireMouseStop);
+    CHECK_EQ_INT(config.selfRaisingApps, ARSelfRaisingFocus);
 }
 
 //------------------------------------------------- quirks -------------------------------------------------
@@ -797,6 +825,134 @@ static void testConfigWriting(void) {
     [[NSFileManager defaultManager] removeItemAtPath: path error: nil];
 }
 
+//------------------------------------------------ intent --------------------------------------------------
+
+// Walks the pointer from one place to another at a given speed, one sample every
+// 8ms as a real mouse would, and returns the last reading.
+static ARIntent glide(ARIntentReader *reader, CGPoint from, CGPoint to,
+                      CGFloat pointsPerSecond, NSTimeInterval *clock) {
+    CGFloat distance = hypot(to.x - from.x, to.y - from.y);
+    NSTimeInterval duration = distance / pointsPerSecond;
+    NSInteger steps = MAX(2, (NSInteger) (duration / 0.008));
+    ARIntent intent = reader.intent;
+    for (NSInteger i = 1; i <= steps; i++) {
+        CGFloat progress = (CGFloat) i / steps;
+        CGPoint point = CGPointMake(from.x + (to.x - from.x) * progress,
+                                    from.y + (to.y - from.y) * progress);
+        *clock += duration / steps;
+        intent = [reader addPoint: point atTime: *clock];
+    }
+    return intent;
+}
+
+// Arrival is announced on one sample only, so a caller has to latch it. The app
+// does the same thing: the event tap records it, the evaluation consumes it.
+static ARIntent rest(ARIntentReader *reader, CGPoint at, NSTimeInterval seconds,
+                     NSTimeInterval *clock) {
+    ARIntent intent = reader.intent;
+    BOOL arrived = NO;
+    for (NSInteger i = 0; i < 10; i++) {
+        *clock += seconds / 10;
+        intent = [reader addPoint: at atTime: *clock];
+        arrived = arrived || intent.arrived;
+    }
+    intent.arrived = arrived;
+    return intent;
+}
+
+static void testIntent(void) {
+    NSTimeInterval clock = 1000;
+
+    CASE("crossing a window at speed is not arriving at it");
+    ARIntentReader *reader = [[ARIntentReader alloc]
+        initWithTuning: ARTuningFor(AREagernessNormal)];
+    ARIntent intent = glide(reader, CGPointMake(0, 0), CGPointMake(1400, 0), 2600, &clock);
+    CHECK(!intent.settled);
+    CHECK(intent.speed > 1000);
+
+    CASE("stopping is arriving, and it is announced once");
+    intent = rest(reader, CGPointMake(1400, 0), 0.20, &clock);
+    CHECK(intent.settled);
+    ARIntent again = rest(reader, CGPointMake(1400, 0), 0.20, &clock);
+    CHECK(again.settled);
+    CHECK(!again.arrived);      // still there, not newly arrived
+
+    CASE("setting off again is travelling, and stopping arrives afresh");
+    intent = glide(reader, CGPointMake(1400, 0), CGPointMake(200, 500), 2600, &clock);
+    CHECK(!intent.settled);
+    intent = rest(reader, CGPointMake(200, 500), 0.20, &clock);
+    CHECK(intent.settled);
+    CHECK(intent.arrived);
+
+    CASE("a shaky hand is not travelling");
+    ARIntentReader *shaky = [[ARIntentReader alloc]
+        initWithTuning: ARTuningFor(AREagernessNormal)];
+    clock += 1;
+    [shaky addPoint: CGPointMake(500, 500) atTime: clock];
+    for (NSInteger i = 0; i < 40; i++) {
+        clock += 0.008;
+        intent = [shaky addPoint: CGPointMake(500 + (i % 2), 500 + ((i / 2) % 2))
+                          atTime: clock];
+    }
+    CHECK(intent.settled);
+
+    CASE("a slow deliberate move counts as arriving where it goes");
+    ARIntentReader *careful = [[ARIntentReader alloc]
+        initWithTuning: ARTuningFor(AREagernessNormal)];
+    clock += 1;
+    intent = glide(careful, CGPointMake(0, 0), CGPointMake(120, 0), 80, &clock);
+    CHECK(intent.settled);
+
+    CASE("eagerness is the only dial: instant tolerates speed, relaxed does not");
+    ARIntentReader *instant = [[ARIntentReader alloc]
+        initWithTuning: ARTuningFor(AREagernessInstant)];
+    ARIntentReader *relaxed = [[ARIntentReader alloc]
+        initWithTuning: ARTuningFor(AREagernessRelaxed)];
+    clock += 1;
+    NSTimeInterval instantClock = clock, relaxedClock = clock;
+    ARIntent quickArrival = glide(instant, CGPointMake(0, 0), CGPointMake(600, 0), 700,
+                                  &instantClock);
+    ARIntent slowArrival = glide(relaxed, CGPointMake(0, 0), CGPointMake(600, 0), 700,
+                                 &relaxedClock);
+    CHECK(quickArrival.settled);     // 700 pt/s is a settle for instant
+    CHECK(!slowArrival.settled);     // and still travelling for relaxed
+
+    CASE("a pointer put somewhere by software did not travel there");
+    ARIntentReader *warped = [[ARIntentReader alloc]
+        initWithTuning: ARTuningFor(AREagernessNormal)];
+    clock += 1;
+    glide(warped, CGPointMake(0, 0), CGPointMake(400, 0), 3000, &clock);
+    CHECK(![warped intent].settled);
+    // One sample, a thousand points away, a millisecond later: a warp.
+    clock += 0.001;
+    ARIntent afterWarp = [warped addPoint: CGPointMake(1400, 600) atTime: clock];
+    CHECK_EQ_INT(afterWarp.speed, 0);
+    clock += 0.10;
+    CHECK([warped addPoint: CGPointMake(1400, 600) atTime: clock].settled);
+
+    CASE("a pointer nobody has reported on has arrived by definition");
+    ARIntentReader *fresh = [[ARIntentReader alloc]
+        initWithTuning: ARTuningFor(AREagernessNormal)];
+    CHECK([fresh settleAtTime: 5].settled);
+
+    CASE("parking without any events still counts as arriving");
+    ARIntentReader *parked = [[ARIntentReader alloc]
+        initWithTuning: ARTuningFor(AREagernessRelaxed)];
+    clock += 1;
+    glide(parked, CGPointMake(0, 0), CGPointMake(800, 0), 3000, &clock);
+    CHECK(![parked intent].settled);
+    CHECK([parked settleAtTime: clock + 0.5].settled);
+
+    CASE("every eagerness has a name that survives a round trip");
+    for (NSString *name in @[@"instant", @"quick", @"normal", @"relaxed"]) {
+        AREagerness eagerness = AREagernessNormal;
+        CHECK(AREagernessParse(name, &eagerness));
+        CHECK_EQ_STR(AREagernessDescribe(eagerness), name);
+    }
+    CHECK(!AREagernessParse(@"whenever", NULL));
+    CHECK(AREagernessParse(@" PATIENT ", NULL));
+}
+
 //------------------------------------------------- stats ---------------------------------------------------
 
 static void testStats(void) {
@@ -885,6 +1041,7 @@ int main(void) {
         testColors();
         testConfigWriting();
         testStats();
+        testIntent();
 
         printf("%d checks, %d failures\n", checks, failures);
         return failures ? 1 : 0;

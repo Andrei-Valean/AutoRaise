@@ -111,6 +111,55 @@ typedef struct {
 ARCorrectedPoint ARCorrectMousePoint(CGPoint raw, CGPoint delta,
                                      BOOL hasScreen, CGRect screenFrame, CGFloat menuBarHeight);
 
+// Intent, read from how the pointer is moving rather than from a stopwatch.
+//
+// A pointer crossing a window on its way somewhere else and a pointer arriving
+// at one look identical if all you know is where it is, which is why the old
+// model needed a delay, a dead zone and a stop requirement to tell them apart.
+// Speed tells them apart on its own: travelling fast is transit, slowing to a
+// halt is arrival.
+// Faster than any hand can move a mouse: a sample this quick is the pointer
+// being put somewhere by software, not travelling there.
+#define AR_TELEPORT_SPEED 20000.0
+
+typedef struct {
+    CGFloat settleSpeed;        // points per second at or below which it has arrived
+    NSTimeInterval confirm;     // how long it has to stay there first
+    CGFloat jitter;             // movements smaller than this are a shaky hand
+} ARIntentTuning;
+
+typedef struct {
+    CGFloat speed;              // points per second, smoothed
+    BOOL settled;               // the pointer has arrived somewhere
+    BOOL arrived;               // it settled on this very sample
+} ARIntent;
+
+// Fed one pointer position per event, in any order of arrival, and reports
+// whether the pointer is travelling or has arrived.
+@interface ARIntentReader : NSObject
+- (instancetype)initWithTuning:(ARIntentTuning)tuning;
+@property (nonatomic) ARIntentTuning tuning;
+@property (nonatomic, readonly) ARIntent intent;
+- (ARIntent)addPoint:(CGPoint)point atTime:(NSTimeInterval)time;
+// A pointer that has not moved for a while has certainly arrived, even if no
+// event ever said so.
+- (ARIntent)settleAtTime:(NSTimeInterval)time;
+- (void)reset;
+@end
+
+// Named tunings, because "how eager should it be" is the only question a person
+// has about timing.
+typedef NS_ENUM(NSInteger, AREagerness) {
+    AREagernessInstant = 0,
+    AREagernessQuick,
+    AREagernessNormal,
+    AREagernessRelaxed,
+};
+
+ARIntentTuning ARTuningFor(AREagerness eagerness);
+BOOL AREagernessParse(NSString *_Nullable text, AREagerness *eagerness);
+NSString *AREagernessDescribe(AREagerness eagerness);
+
 // Delay bookkeeping. delayTicks counts down once per evaluation while the mouse
 // rests on a raisable window; raiseTimes repeats the raise a few times because
 // some apps swallow the first attempt.

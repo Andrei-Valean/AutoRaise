@@ -54,11 +54,10 @@ The window is a front end for a plain text file, so both work and neither wins. 
 Editing the file applies immediately too, and the window only rewrites the lines it has to: your
 comments, ordering and any settings a future version adds are left alone.
 
-    # Timing
-    pollMillis=50            # how often to re-evaluate while the mouse moves
-    heartbeatMillis=500      # idle safety net, 0 disables it
-    delay=1                  # raise delay: 0 never raises, 1 raises at once, n waits (n-1) * pollMillis
-    focusDelay=0             # focus first and raise this much later, 0 disables
+    # What hovering does, and how readily
+    mode=raise               # raise, focusThenRaise, or focus
+    eagerness=normal         # instant, quick, normal or relaxed
+    raiseAfter=400           # ms, only used by focusThenRaise
 
     # Mouse warping on cmd-tab and cmd-grave. Both factors are needed.
     warpX=0.5
@@ -66,10 +65,7 @@ comments, ordering and any settings a future version adds are left alone.
     scale=2.5                # briefly enlarge the cursor after warping, 1.0 disables
     altTaskSwitcher=false    # set when you use a third party task switcher
 
-    # Sensitivity
-    requireMouseStop=true    # wait for the mouse to stop before acting
     selfRaisingApps=focus    # focus, quiet or skip; see below
-    mouseDelta=0.0           # ignore movements smaller than this
     ignoreSpaceChanged=false # do not act right after a space change
 
     # Suspending
@@ -118,11 +114,34 @@ number. Run `./AutoRaise -help` for the full list.
 Arguments beat the file, which would otherwise make a setting in the window look broken. Changing
 that setting in the window drops the argument, so the window always wins from then on.
 
+### There is no delay to tune
+
+A pointer crossing a window on its way somewhere else and a pointer arriving at one look identical
+if all you know is where it is. That is why this used to need a delay, a dead zone and a stop
+requirement: three numbers approximating one idea.
+
+Speed tells them apart on its own. AutoRaise watches how fast the pointer is moving, and acts when it
+slows to a halt on a window. Sweep across three windows at any speed and none of them move; stop on
+one and it comes forward. Measured: a 1500 pt/s sweep across two windows produces nothing, and
+stopping produces one action.
+
+So `eagerness` is the only timing setting, and it says how much the pointer has to slow down before
+AutoRaise believes it has arrived:
+
+    eagerness=instant    # settles under 1200 pt/s, no hold
+    eagerness=quick      # under 600 pt/s, held for 20ms
+    eagerness=normal     # under 260 pt/s, held for 60ms
+    eagerness=relaxed    # under 90 pt/s, held for 180ms
+
+`pollMillis`, `heartbeatMillis`, `delay`, `focusDelay`, `mouseDelta` and `requireMouseStop` are gone.
+A settings file that still has them is read once, translated into a mode and an eagerness, and told
+so at startup, so nothing breaks and nothing is silently ignored.
+
 ### Focus first
 
-`focusDelay` focuses the hovered window without raising it, and raises it `delay` evaluations later,
-or never when `delay=0`. Hover a chat window, a terminal or a notes window that is partly covered
-and type into it, with the windows staying exactly where they are.
+`mode=focus` gives the hovered window the keyboard without raising it, and `mode=focusThenRaise`
+raises it `raiseAfter` milliseconds later. Hover a chat window, a terminal or a notes window that is
+partly covered and type into it, with the windows staying exactly where they are.
 
 Because nothing moves, a focused window is otherwise indistinguishable from an unfocused one, so
 AutoRaise draws a pulsing outline around the one holding the keyboard, and `raiseShortcut` brings

@@ -397,88 +397,62 @@ static NSColor *ARPageTint(ARPage page) {
 
 //---------------------------------------------- raise & focus ---------------------------------------------
 
-// The two delay settings interact, so the window asks for the intent first and
-// then only offers the delays that intent actually uses.
-typedef NS_ENUM(NSInteger, ARRaiseMode) {
-    ARRaiseModeRaise = 0,
-    ARRaiseModeFocusThenRaise,
-    ARRaiseModeFocusOnly,
-};
-
-static ARRaiseMode ARModeForConfig(ARConfig *config) {
-    if (!config.focusDelayTicks) { return ARRaiseModeRaise; }
-    return config.delayTicks ? ARRaiseModeFocusThenRaise : ARRaiseModeFocusOnly;
-}
-
 - (void)buildRaise {
     ARConfig *config = self.config;
     __weak ARSettingsWindowController *weakSelf = self;
-    int poll = config.pollMillis;
 
-    ARSegmentRow *mode = [[ARSegmentRow alloc] initWithTitle: @"When the pointer settles"
+    ARSegmentRow *mode = [[ARSegmentRow alloc] initWithTitle: @"When the pointer arrives"
         subtitle: nil
         choices: @[@"Raise it", @"Focus, then raise", @"Only focus"]
-        selected: ARModeForConfig(config)];
-
-    // Ticks are what the settings file stores: 1 means act at once, n waits
-    // (n-1) poll intervals. The interface talks in milliseconds instead.
-    NSString *(^describeDelay)(double) = ^NSString *(double ticks) {
-        if (ticks <= 0) { return @"Never"; }
-        if (ticks == 1) { return @"Immediately"; }
-        return [NSString stringWithFormat: @"%.0f ms", (ticks - 1) * poll];
-    };
-
-    _raiseDelayRow = [[ARSliderRow alloc] initWithTitle: @"Raise after"
-        min: 1 max: 21 value: config.delayTicks ?: 1];
-    _raiseDelayRow.format = describeDelay;
-    _raiseDelayRow.snapsToIntegers = YES;
-    _raiseDelayRow.onCommit = ^(double ticks) {
-        [weakSelf set: @"delay" to: [NSString stringWithFormat: @"%.0f", ticks]];
-    };
-
-    _focusDelayRow = [[ARSliderRow alloc] initWithTitle: @"Focus after"
-        min: 1 max: 21 value: config.focusDelayTicks ?: 1];
-    _focusDelayRow.format = describeDelay;
-    _focusDelayRow.snapsToIntegers = YES;
-    _focusDelayRow.onCommit = ^(double ticks) {
-        [weakSelf set: @"focusDelay" to: [NSString stringWithFormat: @"%.0f", ticks]];
-    };
-
+        selected: config.mode];
+    NSArray *modeValues = @[@"raise", @"focusThenRaise", @"focus"];
     mode.onChange = ^(NSInteger index) {
-        double raise = weakSelf.raiseDelayRow.slider.doubleValue;
-        double focus = weakSelf.focusDelayRow.slider.doubleValue;
-        switch (index) {
-            case ARRaiseModeRaise:
-                [weakSelf.settingsDelegate applySettings: @{
-                    @"delay": [NSString stringWithFormat: @"%.0f", raise], @"focusDelay": @"0"}];
-                break;
-            case ARRaiseModeFocusThenRaise:
-                [weakSelf.settingsDelegate applySettings: @{
-                    @"delay": [NSString stringWithFormat: @"%.0f", raise],
-                    @"focusDelay": [NSString stringWithFormat: @"%.0f", focus]}];
-                break;
-            default:
-                [weakSelf.settingsDelegate applySettings: @{
-                    @"delay": @"0",
-                    @"focusDelay": [NSString stringWithFormat: @"%.0f", focus]}];
-                break;
-        }
-        [weakSelf updateDelayAvailability: (ARRaiseMode) index];
+        [weakSelf set: @"mode" to: modeValues[index]];
+        [weakSelf rebuild];   // the raise delay belongs to one mode only
     };
 
-    [self addCard: @[mode, _raiseDelayRow, _focusDelayRow]];
-    [self updateDelayAvailability: ARModeForConfig(config)];
-    [self addFootnote: @"Focusing without raising lets you type into a window that stays behind "
-                       "another one. It uses undocumented system calls, so treat it as "
-                       "experimental: a macOS update can take it away."];
+    // One dial. It sets how slowly the pointer has to be moving before AutoRaise
+    // decides it has arrived somewhere, which is the only timing question a
+    // person actually has.
+    ARSegmentRow *eagerness = [[ARSegmentRow alloc] initWithTitle: @"How eager"
+        subtitle: @"How much the pointer has to slow down to count as arriving"
+        choices: @[@"Instant", @"Quick", @"Normal", @"Relaxed"]
+        selected: config.eagerness];
+    NSArray *eagernessValues = @[@"instant", @"quick", @"normal", @"relaxed"];
+    eagerness.onChange = ^(NSInteger index) {
+        [weakSelf set: @"eagerness" to: eagernessValues[index]];
+    };
 
-    ARToggleRow *stop = [[ARToggleRow alloc] initWithTitle: @"Wait for the pointer to stop"
-        subtitle: @"Nothing happens while the pointer is still travelling"
-        on: config.requireMouseStop];
-    stop.onChange = ^(BOOL on) { [weakSelf setBool: @"requireMouseStop" to: on]; };
+    NSMutableArray *rows = [@[mode, eagerness] mutableCopy];
+    if (config.mode == ARHoverModeFocusThenRaise) {
+        ARSliderRow *raiseAfter = [[ARSliderRow alloc] initWithTitle: @"Raise after"
+            min: 0 max: 3000 value: config.raiseAfterMillis];
+        raiseAfter.snapsToIntegers = YES;
+        raiseAfter.format = ^NSString *(double value) {
+            if (value < 50) { return @"Straight away"; }
+            return value >= 1000 ? [NSString stringWithFormat: @"%.1f s", value / 1000]
+                                 : [NSString stringWithFormat: @"%.0f ms", value];
+        };
+        raiseAfter.onCommit = ^(double value) {
+            [weakSelf set: @"raiseAfter" to: [NSString stringWithFormat: @"%.0f", value]];
+        };
+        [rows addObject: raiseAfter];
+    }
+
+    [self addCard: rows];
+    [self addFootnote: @"A pointer crossing a window on its way somewhere else and a pointer "
+                       "arriving at one look the same if all you know is where it is. AutoRaise "
+                       "watches how fast it is going instead, so passing over a window does "
+                       "nothing and stopping on one does. There is no delay to tune."];
+
+    if (config.focusFirst) {
+        [self addFootnote: @"Focusing without raising lets you type into a window that stays "
+                           "behind another one. It uses undocumented system calls, so treat it "
+                           "as experimental: a macOS update can take it away."];
+    }
 
     ARToggleRow *space = [[ARToggleRow alloc] initWithTitle: @"Ignore desktop switches"
-        subtitle: @"Do not raise anything right after moving to another desktop"
+        subtitle: @"Do not act right after moving to another desktop"
         on: config.ignoreSpaceChanged];
     space.onChange = ^(BOOL on) { [weakSelf setBool: @"ignoreSpaceChanged" to: on]; };
 
@@ -491,23 +465,11 @@ static ARRaiseMode ARModeForConfig(ARConfig *config) {
         [weakSelf set: @"selfRaisingApps" to: selfRaisingValues[index]];
     };
 
-    ARSliderRow *delta = [[ARSliderRow alloc] initWithTitle: @"Ignore small movements"
-        min: 0 max: 10 value: config.mouseDelta];
-    delta.snapsToIntegers = YES;
-    delta.format = ^NSString *(double value) {
-        return value == 0 ? @"Most sensitive"
-                          : [NSString stringWithFormat: @"%.0f pixels", value];
-    };
-    delta.onCommit = ^(double value) {
-        [weakSelf set: @"mouseDelta" to: [NSString stringWithFormat: @"%.0f", value]];
-    };
-
-    [self addCard: @[stop, space, delta, selfRaising]];
-    [self addFootnote: @"Raise a shaky hand's threshold if windows come forward while you are "
-                       "only passing over them. Focusing a browser quietly keeps it where it "
-                       "is, but the browser then decides which of its own windows takes the "
-                       "keyboard, so it suits one window per screen better than several. "
-                       "\"AutoRaise -dumpQuirks\" lists the applications this applies to."];
+    [self addCard: @[space, selfRaising]];
+    [self addFootnote: @"Focusing a browser quietly keeps it where it is, but the browser then "
+                       "decides which of its own windows takes the keyboard, so it suits one "
+                       "window per screen better than several. \"AutoRaise -dumpQuirks\" lists "
+                       "the applications this applies to."];
 
     // Focus without raise is invisible unless something says which window is
     // listening, so the ring belongs next to the setting that causes it.
@@ -671,17 +633,6 @@ static ARRaiseMode ARModeForConfig(ARConfig *config) {
     }
 }
 
-- (void)ringColorChanged:(NSColorWell *)well {
-    NSColor *srgb = [well.color colorUsingColorSpace: NSColorSpace.sRGBColorSpace];
-    ARColor color = {NO, srgb.redComponent, srgb.greenComponent, srgb.blueComponent,
-                     srgb.alphaComponent};
-    [self set: @"focusRingColor" to: ARColorDescribe(color)];
-}
-
-- (void)updateDelayAvailability:(ARRaiseMode)mode {
-    [_raiseDelayRow setRowEnabled: mode != ARRaiseModeFocusOnly];
-    [_focusDelayRow setRowEnabled: mode != ARRaiseModeRaise];
-}
 
 //------------------------------------------------ pointer -------------------------------------------------
 
@@ -871,33 +822,6 @@ static ARRaiseMode ARModeForConfig(ARConfig *config) {
     [self addCard: @[hitTest, legacy]];
     [self addFootnote: @"If the wrong window raises, switch the hit test to accessibility and "
                        "please report it."];
-
-    ARSliderRow *poll = [[ARSliderRow alloc] initWithTitle: @"Check every"
-        min: 20 max: 200 value: config.pollMillis];
-    poll.snapsToIntegers = YES;
-    poll.format = ^NSString *(double value) {
-        return [NSString stringWithFormat: @"%.0f ms", value];
-    };
-    poll.onCommit = ^(double value) {
-        [weakSelf set: @"pollMillis" to: [NSString stringWithFormat: @"%.0f", value]];
-        // Delays are counted in these intervals, so their labels change too.
-        [weakSelf rebuild];
-    };
-
-    ARSliderRow *heartbeat = [[ARSliderRow alloc] initWithTitle: @"Safety check every"
-        min: 0 max: 2000 value: config.heartbeatMillis];
-    heartbeat.snapsToIntegers = YES;
-    heartbeat.format = ^NSString *(double value) {
-        return value == 0 ? @"Off" : [NSString stringWithFormat: @"%.1f s", value / 1000.0];
-    };
-    heartbeat.onCommit = ^(double value) {
-        [weakSelf set: @"heartbeatMillis" to: [NSString stringWithFormat: @"%.0f", value]];
-    };
-
-    [self addCard: @[poll, heartbeat]];
-    [self addFootnote: @"AutoRaise does not poll while the pointer is still. The first interval "
-                       "only applies while it moves; the second is a fallback in case a mouse "
-                       "movement is ever missed."];
 
     ARToggleRow *reload = [[ARToggleRow alloc] initWithTitle: @"Watch the settings file"
         subtitle: @"Apply changes made in a text editor straight away" on: config.liveReload];

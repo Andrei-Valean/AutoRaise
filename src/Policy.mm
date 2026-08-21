@@ -205,3 +205,136 @@ ARDelayStep ARAdvanceDelay(ARDelayState state, int delayCount) {
     }
     return step;
 }
+
+//------------------------------------------------- intent -------------------------------------------------
+
+// Named tunings. The speeds are in points per second: a deliberate move across a
+// screen runs at a couple of thousand, a careful adjustment at a hundred or so.
+ARIntentTuning ARTuningFor(AREagerness eagerness) {
+    switch (eagerness) {
+        case AREagernessInstant: return (ARIntentTuning) {1200, 0.00, 2};
+        case AREagernessQuick:   return (ARIntentTuning) {600,  0.02, 2};
+        case AREagernessRelaxed: return (ARIntentTuning) {90,   0.18, 3};
+        default:                 return (ARIntentTuning) {260,  0.06, 2};
+    }
+}
+
+BOOL AREagernessParse(NSString *text, AREagerness *eagerness) {
+    static NSDictionary<NSString *, NSNumber *> *names = nil;
+    if (!names) {
+        names = @{@"instant": @(AREagernessInstant), @"immediate": @(AREagernessInstant),
+                  @"quick": @(AREagernessQuick), @"fast": @(AREagernessQuick),
+                  @"normal": @(AREagernessNormal), @"default": @(AREagernessNormal),
+                  @"relaxed": @(AREagernessRelaxed), @"slow": @(AREagernessRelaxed),
+                  @"patient": @(AREagernessRelaxed)};
+    }
+    NSNumber *found = names[[[text stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceCharacterSet]] lowercaseString] ?: @""];
+    if (!found) { return NO; }
+    if (eagerness) { *eagerness = (AREagerness) found.integerValue; }
+    return YES;
+}
+
+NSString *AREagernessDescribe(AREagerness eagerness) {
+    switch (eagerness) {
+        case AREagernessInstant: return @"instant";
+        case AREagernessQuick: return @"quick";
+        case AREagernessRelaxed: return @"relaxed";
+        default: return @"normal";
+    }
+}
+
+@implementation ARIntentReader {
+    CGPoint _last;
+    NSTimeInterval _lastTime;
+    BOOL _started;
+    CGFloat _speed;
+    NSTimeInterval _slowSince;   // when the pointer last dropped below the threshold
+    BOOL _settled;
+}
+
+- (instancetype)initWithTuning:(ARIntentTuning)tuning {
+    if ((self = [super init])) {
+        _tuning = tuning;
+        [self reset];
+    }
+    return self;
+}
+
+- (void)reset {
+    _started = NO;
+    _speed = 0;
+    _slowSince = 0;
+    _settled = NO;
+}
+
+- (ARIntent)intent {
+    return (ARIntent) {_speed, _settled, NO};
+}
+
+- (ARIntent)addPoint:(CGPoint)point atTime:(NSTimeInterval)time {
+    if (!_started) {
+        _started = YES;
+        _last = point;
+        _lastTime = time;
+        // Nothing is known yet, so treat the first sample as standing still.
+        _slowSince = time;
+        _speed = 0;
+        return [self stateAtTime: time];
+    }
+
+    CGFloat distance = hypot(point.x - _last.x, point.y - _last.y);
+    NSTimeInterval elapsed = time - _lastTime;
+    _last = point;
+    _lastTime = time;
+
+    // A pointer that moved a pixel or two, or not at all, is not travelling: a
+    // shaky hand and a parked hand both mean it has arrived.
+    if (distance <= _tuning.jitter || elapsed <= 0) {
+        _speed = 0;
+        if (_slowSince == 0) { _slowSince = time; }
+        return [self stateAtTime: time];
+    }
+
+    CGFloat instant = distance / elapsed;
+    if (instant > AR_TELEPORT_SPEED) {
+        // The pointer was put here rather than moved here, by a warp or by
+        // switching displays. Nothing was travelled over, so the journey starts
+        // afresh from wherever it landed.
+        _speed = 0;
+        _slowSince = time;
+        return [self stateAtTime: time];
+    }
+    // Smoothed, so one stray sample neither starts nor stops a journey.
+    _speed = _speed * 0.6 + instant * 0.4;
+
+    if (_speed > _tuning.settleSpeed) {
+        _slowSince = 0;
+        _settled = NO;
+    } else if (_slowSince == 0) {
+        _slowSince = time;
+    }
+    return [self stateAtTime: time];
+}
+
+- (ARIntent)settleAtTime:(NSTimeInterval)time {
+    if (!_started) {
+        BOOL arrived = !_settled;
+        _settled = YES;
+        return (ARIntent) {0, YES, arrived};
+    }
+    // No events since the last one means the pointer has been still since then,
+    // whatever speed that last sample happened to report.
+    _speed = 0;
+    if (_slowSince == 0) { _slowSince = _lastTime; }
+    return [self stateAtTime: time];
+}
+
+- (ARIntent)stateAtTime:(NSTimeInterval)time {
+    BOOL slowEnough = _slowSince != 0 && time - _slowSince >= _tuning.confirm;
+    BOOL arrived = slowEnough && !_settled;
+    _settled = slowEnough;
+    return (ARIntent) {_speed, _settled, arrived};
+}
+
+@end

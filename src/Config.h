@@ -13,7 +13,19 @@
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
 
+#import "Policy.h"   // intent tuning and eagerness
+
 NS_ASSUME_NONNULL_BEGIN
+
+// What happens when the pointer arrives on a window.
+typedef NS_ENUM(NSInteger, ARHoverMode) {
+    ARHoverModeRaise = 0,       // bring it to the front
+    ARHoverModeFocusThenRaise,  // give it the keyboard, raise it after a while
+    ARHoverModeFocus,           // give it the keyboard and leave it where it is
+};
+
+BOOL ARHoverModeParse(NSString *_Nullable text, ARHoverMode *mode);
+NSString *ARHoverModeDescribe(ARHoverMode mode);
 
 // What to do about applications that bring themselves to the front the moment
 // they are focused, which is most browsers. Focusing such a window needs events
@@ -71,12 +83,11 @@ NSString *ARRingPlacementDescribe(ARRingPlacement placement);
 
 @interface ARConfig : NSObject
 
-// Timing. delay and focusDelay are counted in evaluations, as they always were:
-// 0 disables, 1 acts immediately, n waits (n-1) * pollMillis.
-@property (nonatomic) int pollMillis;
-@property (nonatomic) int heartbeatMillis;   // idle safety net, 0 disables
-@property (nonatomic) int delayTicks;
-@property (nonatomic) int focusDelayTicks;
+// What hovering does, and how readily.
+@property (nonatomic) ARHoverMode mode;
+@property (nonatomic) AREagerness eagerness;
+// How long after focusing to raise, in milliseconds, in the mode that does both.
+@property (nonatomic) int raiseAfterMillis;
 
 // Mouse warping on task switch.
 @property (nonatomic) float warpX;
@@ -85,11 +96,9 @@ NSString *ARRingPlacementDescribe(ARRingPlacement placement);
 @property (nonatomic, readonly) BOOL warpMouse;
 
 @property (nonatomic) BOOL altTaskSwitcher;
-@property (nonatomic) BOOL requireMouseStop;
 @property (nonatomic) BOOL ignoreSpaceChanged;
 @property (nonatomic) BOOL invertDisableKey;
 @property (nonatomic) BOOL invertIgnoreApps;
-@property (nonatomic) float mouseDelta;
 
 // Used to be OLD_ACTIVATION_METHOD, ALTERNATIVE_TASK_SWITCHER and
 // EXPERIMENTAL_FOCUS_FIRST at compile time.
@@ -125,10 +134,10 @@ NSString *ARRingPlacementDescribe(ARRingPlacement placement);
 @property (nonatomic, copy, nullable) NSString *sourcePath;
 @property (nonatomic, copy) NSArray<NSString *> *warnings;
 
-// Derived: focus the hovered window first and raise it later (or never).
-@property (nonatomic, readonly) BOOL focusFirst;
-@property (nonatomic, readonly) int primaryDelayTicks;   // drives the delay countdown
-@property (nonatomic, readonly) int raiseAfterFocusTicks;
+// Derived from the mode, so the rest of the program need not know about it.
+@property (nonatomic, readonly) BOOL focusFirst;   // the keyboard moves before the window
+@property (nonatomic, readonly) BOOL raises;       // anything comes forward at all
+@property (nonatomic, readonly) ARIntentTuning tuning;
 
 @end
 

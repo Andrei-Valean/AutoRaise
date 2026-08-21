@@ -7,15 +7,20 @@
 
 #define AR_MIN_POLL_MILLIS 20
 
+static NSString *const kMode = @"mode";
+static NSString *const kEagerness = @"eagerness";
+static NSString *const kRaiseAfter = @"raiseAfter";
+// Kept only so that a settings file written for an older version still works.
 static NSString *const kPollMillis = @"pollMillis";
 static NSString *const kHeartbeatMillis = @"heartbeatMillis";
 static NSString *const kDelay = @"delay";
 static NSString *const kFocusDelay = @"focusDelay";
+static NSString *const kMouseDelta = @"mouseDelta";
+static NSString *const kRequireMouseStop = @"requireMouseStop";
 static NSString *const kWarpX = @"warpX";
 static NSString *const kWarpY = @"warpY";
 static NSString *const kScale = @"scale";
 static NSString *const kAltTaskSwitcher = @"altTaskSwitcher";
-static NSString *const kRequireMouseStop = @"requireMouseStop";
 static NSString *const kIgnoreSpaceChanged = @"ignoreSpaceChanged";
 static NSString *const kInvertDisableKey = @"invertDisableKey";
 static NSString *const kInvertIgnoreApps = @"invertIgnoreApps";
@@ -23,7 +28,6 @@ static NSString *const kIgnoreApps = @"ignoreApps";
 static NSString *const kIgnoreTitles = @"ignoreTitles";
 static NSString *const kStayFocusedBundleIds = @"stayFocusedBundleIds";
 static NSString *const kDisableKey = @"disableKey";
-static NSString *const kMouseDelta = @"mouseDelta";
 static NSString *const kLegacyActivation = @"legacyActivation";
 static NSString *const kWindowServerHitTest = @"windowServerHitTest";
 static NSString *const kMenuBarIcon = @"menuBarIcon";
@@ -45,8 +49,16 @@ static NSString *const kEnabled = @"enabled";
 static NSString *const kToggleShortcut = @"toggleShortcut";
 static NSString *const kConfig = @"config";
 
+// Settings that no longer do anything on their own: they are translated into the
+// mode and the eagerness, once, with a note saying so.
+static NSArray<NSString *> *ARRetiredKeys(void) {
+    return @[kPollMillis, kHeartbeatMillis, kDelay, kFocusDelay, kMouseDelta,
+             kRequireMouseStop];
+}
+
 static NSArray<NSString *> *ARConfigKeys(void) {
-    return @[kPollMillis, kHeartbeatMillis, kDelay, kFocusDelay, kWarpX, kWarpY, kScale,
+    return @[kMode, kEagerness, kRaiseAfter,
+             kPollMillis, kHeartbeatMillis, kDelay, kFocusDelay, kWarpX, kWarpY, kScale,
              kAltTaskSwitcher, kRequireMouseStop, kIgnoreSpaceChanged, kInvertDisableKey,
              kInvertIgnoreApps, kIgnoreApps, kIgnoreTitles, kStayFocusedBundleIds,
              kDisableKey, kMouseDelta, kLegacyActivation, kWindowServerHitTest,
@@ -64,19 +76,35 @@ static NSArray<NSString *> *ARConfigKeys(void) {
     return self.warpX >= 0 && self.warpX <= 1 && self.warpY >= 0 && self.warpY <= 1;
 }
 
-- (int)primaryDelayTicks {
-    return self.focusDelayTicks ? self.focusDelayTicks : self.delayTicks;
-}
-
-- (int)raiseAfterFocusTicks {
-    return self.focusDelayTicks ? self.delayTicks : 1;
-}
-
-- (BOOL)focusFirst {
-    return self.primaryDelayTicks && self.raiseAfterFocusTicks != 1;
-}
+- (BOOL)focusFirst { return self.mode != ARHoverModeRaise; }
+- (BOOL)raises { return self.mode != ARHoverModeFocus; }
+- (ARIntentTuning)tuning { return ARTuningFor(self.eagerness); }
 
 @end
+
+BOOL ARHoverModeParse(NSString *text, ARHoverMode *mode) {
+    static NSDictionary<NSString *, NSNumber *> *names = nil;
+    if (!names) {
+        names = @{@"raise": @(ARHoverModeRaise),
+                  @"focusthenraise": @(ARHoverModeFocusThenRaise),
+                  @"focus-then-raise": @(ARHoverModeFocusThenRaise),
+                  @"both": @(ARHoverModeFocusThenRaise),
+                  @"focus": @(ARHoverModeFocus), @"focusonly": @(ARHoverModeFocus)};
+    }
+    NSNumber *found = names[[[text stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceCharacterSet]] lowercaseString] ?: @""];
+    if (!found) { return NO; }
+    if (mode) { *mode = (ARHoverMode) found.integerValue; }
+    return YES;
+}
+
+NSString *ARHoverModeDescribe(ARHoverMode mode) {
+    switch (mode) {
+        case ARHoverModeFocusThenRaise: return @"focusThenRaise";
+        case ARHoverModeFocus: return @"focus";
+        default: return @"raise";
+    }
+}
 
 BOOL ARSelfRaisingParse(NSString *text, ARSelfRaisingApps *mode) {
     static NSDictionary<NSString *, NSNumber *> *names = nil;
@@ -351,30 +379,86 @@ static ARRingStyle ARRingStyleFromValues(NSDictionary *values, NSMutableArray *w
     return style;
 }
 
+// A settings file written for an older version describes the same intentions in
+// units that no longer exist: a delay counted in polling intervals, a dead zone,
+// and a stop requirement. They are read once, turned into a mode and an
+// eagerness, and said out loud so nobody wonders where they went.
+@interface ARConfig (Retired)
+- (void)adoptRetiredSettings:(NSDictionary *)values warnings:(NSMutableArray *)warnings;
+@end
+
+@implementation ARConfig (Retired)
+
+- (void)adoptRetiredSettings:(NSDictionary *)values warnings:(NSMutableArray *)warnings {
+    NSMutableArray *retired = [NSMutableArray array];
+    for (NSString *key in ARRetiredKeys()) {
+        if (values[key]) { [retired addObject: key]; }
+    }
+    if (!retired.count) { return; }
+
+    int poll = values[kPollMillis] ? MAX(1, [values[kPollMillis] intValue]) : 50;
+    BOOL hasDelay = values[kDelay] != nil, hasFocusDelay = values[kFocusDelay] != nil;
+    int delay = [values[kDelay] intValue], focusDelay = [values[kFocusDelay] intValue];
+
+    // The old pair of counters said which of the three things should happen.
+    if (!values[kMode]) {
+        if ((hasFocusDelay && focusDelay > 0) || (hasDelay && delay == 0)) {
+            self.mode = (hasDelay && delay > 0) ? ARHoverModeFocusThenRaise : ARHoverModeFocus;
+            if (self.mode == ARHoverModeFocusThenRaise) {
+                self.raiseAfterMillis = MAX(0, (delay - 1) * poll);
+            }
+        } else {
+            self.mode = ARHoverModeRaise;
+        }
+    }
+
+    // And the counter that was in force said how long to wait.
+    if (!values[kEagerness]) {
+        int ticks = (hasFocusDelay && focusDelay > 0) ? focusDelay : delay;
+        int waited = MAX(0, (ticks - 1) * poll);
+        if (!ARBool(values, kRequireMouseStop, YES) || waited == 0) {
+            self.eagerness = AREagernessInstant;
+        } else if (waited <= 60) {
+            self.eagerness = AREagernessQuick;
+        } else if (waited <= 200) {
+            self.eagerness = AREagernessNormal;
+        } else {
+            self.eagerness = AREagernessRelaxed;
+        }
+    }
+
+    [warnings addObject: [NSString stringWithFormat:
+        @"%@ no longer exist: hovering now reads the pointer's movement instead of counting "
+         "polling intervals. Read as mode=%@, eagerness=%@; remove them from the file to "
+         "silence this.",
+        [retired componentsJoinedByString: @", "], ARHoverModeDescribe(self.mode),
+        AREagernessDescribe(self.eagerness)]];
+}
+
+@end
+
 ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
                              NSArray<NSString *> *warnings) {
     ARConfig *config = [[ARConfig alloc] init];
     NSMutableArray *allWarnings = [(warnings ?: @[]) mutableCopy];
 
-    config.pollMillis = values[kPollMillis] ? [values[kPollMillis] intValue] : 50;
-    if (config.pollMillis < AR_MIN_POLL_MILLIS) {
-        if (values[kPollMillis]) {
-            [allWarnings addObject: [NSString stringWithFormat: @"pollMillis %@ is below the %d minimum, using 50",
-                                     values[kPollMillis], AR_MIN_POLL_MILLIS]];
-        }
-        config.pollMillis = 50;
+    ARHoverMode mode = ARHoverModeRaise;
+    if (values[kMode].length && !ARHoverModeParse(values[kMode], &mode)) {
+        [allWarnings addObject: [NSString stringWithFormat:
+            @"mode \"%@\" is not raise, focusThenRaise or focus", values[kMode]]];
     }
+    config.mode = mode;
 
-    config.heartbeatMillis = values[kHeartbeatMillis] ? [values[kHeartbeatMillis] intValue] : 500;
-    if (config.heartbeatMillis && config.heartbeatMillis < config.pollMillis) {
-        config.heartbeatMillis = config.pollMillis;
+    AREagerness eagerness = AREagernessNormal;
+    if (values[kEagerness].length && !AREagernessParse(values[kEagerness], &eagerness)) {
+        [allWarnings addObject: [NSString stringWithFormat:
+            @"eagerness \"%@\" is not instant, quick, normal or relaxed", values[kEagerness]]];
     }
+    config.eagerness = eagerness;
+    config.raiseAfterMillis = values[kRaiseAfter] ? [values[kRaiseAfter] intValue] : 400;
+    if (config.raiseAfterMillis < 0) { config.raiseAfterMillis = 0; }
 
-    config.delayTicks = [values[kDelay] intValue];
-    config.focusDelayTicks = [values[kFocusDelay] intValue];
-    if (!values[kDelay] && !values[kFocusDelay]) { config.delayTicks = 1; }
-    if (!config.delayTicks && !values[kFocusDelay]) { config.focusDelayTicks = 1; }
-    if (!values[kDelay] && !config.focusDelayTicks) { config.delayTicks = 1; }
+    [config adoptRetiredSettings: values warnings: allWarnings];
 
     config.warpX = values[kWarpX] ? [values[kWarpX] floatValue] : -1;
     config.warpY = values[kWarpY] ? [values[kWarpY] floatValue] : -1;
@@ -382,7 +466,6 @@ ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
     if (config.cursorScale < 1) { config.cursorScale = 2.0; }
 
     config.altTaskSwitcher = ARBool(values, kAltTaskSwitcher, NO);
-    config.requireMouseStop = ARBool(values, kRequireMouseStop, YES);
     config.ignoreSpaceChanged = ARBool(values, kIgnoreSpaceChanged, NO);
     config.invertDisableKey = ARBool(values, kInvertDisableKey, NO);
     config.invertIgnoreApps = ARBool(values, kInvertIgnoreApps, NO);
@@ -427,8 +510,6 @@ ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
             values[kFocusRingColor]]];
     }
 
-    config.mouseDelta = [values[kMouseDelta] floatValue];
-    if (config.mouseDelta < 0) { config.mouseDelta = 0; }
 
     NSString *disableKey = values[kDisableKey] ?: @"control";
     if ([disableKey isEqualToString: @"control"]) {
@@ -530,17 +611,13 @@ NSString *ARConfigTemplate(void) {
     return @"# AutoRaise configuration. Reloaded automatically when saved.\n"
             "# Every setting is optional; the values below are the defaults.\n"
             "\n"
-            "# How often to re-evaluate while the mouse is moving, in milliseconds.\n"
-            "pollMillis=50\n"
-            "# Idle safety net for windows that appear under a still cursor. 0 disables.\n"
-            "heartbeatMillis=500\n"
-            "\n"
-            "# Raise delay in evaluations: 0 never raises, 1 raises at once, n waits\n"
-            "# (n-1) * pollMillis.\n"
-            "delay=1\n"
-            "# Focus the hovered window first and raise it after this many evaluations.\n"
-            "# 0 disables. Uses private API, see the README.\n"
-            "focusDelay=0\n"
+            "# What hovering a window does: raise, focusThenRaise, or focus.\n"
+            "mode=raise\n"
+            "# How readily, read from the pointer slowing down rather than a stopwatch:\n"
+            "# instant, quick, normal or relaxed.\n"
+            "eagerness=normal\n"
+            "# In focusThenRaise, how long after focusing to bring the window forward.\n"
+            "raiseAfter=400\n"
             "\n"
             "# Warp the mouse into the window activated by cmd-tab or cmd-grave.\n"
             "# Both factors are between 0 and 1; leave them out to disable warping.\n"
@@ -549,7 +626,6 @@ NSString *ARConfigTemplate(void) {
             "#scale=2.5\n"
             "#altTaskSwitcher=false\n"
             "\n"
-            "requireMouseStop=true\n"
             "\n"
             "# Browsers and some editors bring themselves to the front the moment they\n"
             "# are focused. focus lets them; quiet hands them the keyboard without the\n"
@@ -558,7 +634,6 @@ NSString *ARConfigTemplate(void) {
             "# alone. The list is the appsRaisingOnFocus quirk.\n"
             "selfRaisingApps=focus\n"
             "ignoreSpaceChanged=false\n"
-            "mouseDelta=0.0\n"
             "\n"
             "# Hold this key to suspend AutoRaise: control, option, command, shift, disabled.\n"
             "disableKey=control\n"
@@ -603,13 +678,11 @@ NSString *ARConfigTemplate(void) {
 
 NSString *ARConfigUsage(void) {
     return @"AutoRaise\n"
-            "  -pollMillis <20, 30, 40, 50, ...>     evaluation interval while moving\n"
-            "  -heartbeatMillis <500>                idle safety net, 0 disables\n"
-            "  -delay <0=no-raise, 1=no-delay, n>    raise delay in evaluations\n"
-            "  -focusDelay <0=no-focus, 1=no-delay>  focus first, raise later\n"
+            "  -mode <raise|focusThenRaise|focus>    what hovering does\n"
+            "  -eagerness <instant|quick|normal|relaxed>\n"
+            "  -raiseAfter <400>                     ms, for focusThenRaise\n"
             "  -warpX <0.5> -warpY <0.5> -scale <2.0>\n"
             "  -altTaskSwitcher <true|false>\n"
-            "  -requireMouseStop <true|false>\n"
             "  -selfRaisingApps <focus|quiet|skip>   apps that raise themselves on focus\n"
             "  -ignoreSpaceChanged <true|false>\n"
             "  -invertDisableKey <true|false>\n"
@@ -618,7 +691,6 @@ NSString *ARConfigUsage(void) {
             "  -ignoreTitles \"<Regex1,Regex2, ...>\"\n"
             "  -stayFocusedBundleIds \"<Id1,Id2, ...>\"\n"
             "  -disableKey <control|option|command|shift|disabled>\n"
-            "  -mouseDelta <0.1>\n"
             "  -windowServerHitTest <true|false>     ask the window server, not the app\n"
             "  -legacyActivation <true|false>        for GTK, SDL and wine apps\n"
             "  -menuBarIcon <true|false>\n"
@@ -638,30 +710,25 @@ NSString *ARConfigUsage(void) {
             "  -help, -version\n";
 }
 
-static NSString *ARDescribeDelay(int ticks, int pollMillis) {
-    if (!ticks) { return @"disabled"; }
-    return [NSString stringWithFormat: @"%dms", (ticks - 1) * pollMillis];
-}
 
 NSString *ARConfigSummary(ARConfig *config) {
     NSMutableString *out = [NSMutableString string];
     [out appendFormat: @"Settings from %@:\n", config.sourcePath ?: @"defaults and arguments"];
-    [out appendFormat: @"  * pollMillis: %dms", config.pollMillis];
-    if (config.heartbeatMillis) { [out appendFormat: @", heartbeat: %dms\n", config.heartbeatMillis]; }
-    else { [out appendString: @", heartbeat: disabled\n"]; }
-    [out appendFormat: @"  * delay: %@\n", ARDescribeDelay(config.delayTicks, config.pollMillis)];
-    [out appendFormat: @"  * focusDelay: %@%@\n", ARDescribeDelay(config.focusDelayTicks, config.pollMillis),
-        config.focusFirst ? @" (focus first)" : @""];
+    [out appendFormat: @"  * on hover: %@\n", ARHoverModeDescribe(config.mode)];
+    if (config.mode == ARHoverModeFocusThenRaise) {
+        [out appendFormat: @"  * raise after: %dms\n", config.raiseAfterMillis];
+    }
+    ARIntentTuning tuning = config.tuning;
+    [out appendFormat: @"  * eagerness: %@ (settles under %.0f pt/s, holds %.0fms)\n",
+        AREagernessDescribe(config.eagerness), tuning.settleSpeed, tuning.confirm * 1000];
     if (config.warpMouse) {
         [out appendFormat: @"  * warpX: %.2f, warpY: %.2f, scale: %.1f\n",
             config.warpX, config.warpY, config.cursorScale];
         [out appendFormat: @"  * altTaskSwitcher: %s\n", config.altTaskSwitcher ? "true" : "false"];
     }
-    [out appendFormat: @"  * requireMouseStop: %s\n", config.requireMouseStop ? "true" : "false"];
     [out appendFormat: @"  * ignoreSpaceChanged: %s\n", config.ignoreSpaceChanged ? "true" : "false"];
     [out appendFormat: @"  * disableKey: %@%@\n", config.disableKeyName,
         config.invertDisableKey ? @" (inverted)" : @""];
-    if (config.mouseDelta) { [out appendFormat: @"  * mouseDelta: %.2f\n", config.mouseDelta]; }
     for (NSString *app in config.ignoreApps) {
         [out appendFormat: @"  * %@: %@\n", config.invertIgnoreApps ? @"includeApp" : @"ignoreApp", app];
     }
