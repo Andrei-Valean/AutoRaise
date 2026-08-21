@@ -20,6 +20,9 @@ HEADERS := src/AppTable.h src/Config.h src/FocusRing.h src/Inspector.h src/MenuB
            src/SettingsUI.h src/SettingsWindow.h src/WindowFinder.h
 OBJECTS := $(patsubst src/%.mm,build/%.o,$(SOURCES))
 
+VERSION := $(shell /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Info.plist)
+DMG := AutoRaise-$(VERSION).dmg
+
 # Signing is what stops macOS from treating every build as a brand new app and
 # losing the accessibility permission you already granted. A Developer ID is
 # used when present, otherwise a development certificate, otherwise ad hoc.
@@ -94,12 +97,10 @@ uninstall:
 	-pkill -x AutoRaise
 	rm -rf /Applications/AutoRaise.app
 
+# The thing to hand to another Mac: the app, a Read Me covering the two hurdles
+# macOS puts in front of it, and a report of which of them will happen.
 dmg: AutoRaise.app
-	rm -rf build/dmg AutoRaise.dmg
-	mkdir -p build/dmg
-	cp -r AutoRaise.app build/dmg/
-	ln -s /Applications build/dmg/Applications
-	hdiutil create -volname AutoRaise -srcfolder build/dmg -ov -format UDZO AutoRaise.dmg
+	./tools/make-dmg.sh
 
 # Needs a Developer ID certificate and a stored notarytool profile:
 #   xcrun notarytool store-credentials AutoRaise --apple-id ... --team-id ... --password ...
@@ -108,21 +109,22 @@ notarize: dmg
 	    "Developer ID Application"*) ;; \
 	    *) echo "notarize needs a Developer ID Application certificate, found: $(CODESIGN_IDENTITY)"; exit 1;; \
 	esac
-	xcrun notarytool submit AutoRaise.dmg --keychain-profile "$(AR_NOTARY_PROFILE)" --wait
-	xcrun stapler staple AutoRaise.dmg
-	spctl -a -t open --context context:primary-signature -v AutoRaise.dmg
+	xcrun notarytool submit $(DMG) --keychain-profile "$(AR_NOTARY_PROFILE)" --wait
+	xcrun stapler staple $(DMG)
+	spctl -a -t open --context context:primary-signature -v $(DMG)
 
 identity:
 	@echo "$(CODESIGN_IDENTITY)"
+	@codesign -dvv AutoRaise.app 2>&1 | grep -E "^Authority=|^Signature=" | head -1 || true
 
 clean:
-	rm -f AutoRaise
+	rm -f AutoRaise AutoRaise-*.dmg
 	rm -rf AutoRaise.app build
 
 run: all
-	./AutoRaise -focusDelay 1
+	./AutoRaise -mode focus
 
 debug: all
-	./AutoRaise -focusDelay 1 -verbose true
+	./AutoRaise -mode focus -verbose true
 
 update: all install

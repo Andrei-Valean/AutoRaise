@@ -35,6 +35,14 @@ case "$IDENTITY" in
     "Developer ID Application"*)
         SIGN_ARGS+=(--options runtime --timestamp)
         ;;
+    -)
+        ;;
+    *)
+        # A timestamp keeps the signature valid after the certificate expires,
+        # which matters for a copy installed on somebody else's Mac: without it
+        # the accessibility permission stops applying the day the year is up.
+        SIGN_ARGS+=(--timestamp)
+        ;;
 esac
 
 if codesign "${SIGN_ARGS[@]}" "$BUNDLE"; then

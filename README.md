@@ -342,7 +342,7 @@ start AutoRaise again.
     make test       # the decision logic, no accessibility permission needed
     make install    # copy AutoRaise.app to /Applications
     make icon       # redraw AutoRaise.icns from tools/make-icon.mm
-    make dmg        # package a disk image
+    make dmg        # a disk image to hand to another Mac
 
 There are no compile time options left. `make` picks the best code signing certificate it can find,
 preferring a Developer ID over a development certificate over ad hoc signing; override it with
@@ -353,6 +353,28 @@ For a release, sign with a Developer ID and notarize:
 
     xcrun notarytool store-credentials AutoRaise --apple-id you@example.com --team-id TEAMID --password app-specific-password
     make notarize AR_NOTARY_PROFILE=AutoRaise
+
+### Installing it on another Mac
+
+    make dmg
+
+That writes `AutoRaise-<version>.dmg`: the app, a shortcut to Applications, and a Read Me covering
+the two things that stop a copied app from working. `make dmg` refuses an ad hoc signed bundle and
+says outright whether Gatekeeper will block the first launch, so neither surprise arrives at the
+other end.
+
+Signed but not notarized, which is what a development certificate can do, macOS blocks the first
+launch: **System Settings → Privacy & Security**, then **Open Anyway** on the line about AutoRaise.
+`xattr -dr com.apple.quarantine /Applications/AutoRaise.app` before launching skips that. Then
+accessibility has to be allowed, without which AutoRaise can see nothing. `make notarize` with a
+Developer ID removes the first step, not the second.
+
+The signature matters more than it looks: macOS identifies an accessibility client by it, so an ad
+hoc signed build gets a new identity every time it is compiled and the permission you granted stops
+applying to it. A certificate keeps the identity stable, `--timestamp` keeps it valid after the
+certificate expires, and `make install` updates the bundle in place rather than deleting it, because
+deleting it takes the permission with it. Between them, updating AutoRaise does not mean granting
+accessibility again.
 
 ## How it is put together
 
