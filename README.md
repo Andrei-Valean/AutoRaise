@@ -55,6 +55,7 @@ comments, ordering and any settings a future version adds are left alone.
 
     # Sensitivity
     requireMouseStop=true    # wait for the mouse to stop before acting
+    selfRaisingApps=focus    # focus, quiet or skip; see below
     mouseDelta=0.0           # ignore movements smaller than this
     ignoreSpaceChanged=false # do not act right after a space change
 
@@ -146,6 +147,27 @@ Hovering a window hands it the keyboard, whatever else is on screen:
   than appearing to ignore you.
 - A floating window, which cannot be focused without being raised, is raised instead of skipped.
 - A system dialog, a password prompt for instance, never loses the keyboard to a hover.
+
+### Applications that raise themselves
+
+Browsers, and a few editors, come to the front the instant they are focused.
+Focusing a particular window means posting events into the application to say which window should
+take the keyboard, and those events are exactly what such an application reacts to. Measured on Dia:
+with them the right window becomes key and the application jumps to the front; without them it stays
+put. Setting the accessibility focus attribute instead is accepted and ignored, and putting the other
+windows back on top afterwards loses the race and flickers.
+
+So `selfRaisingApps` picks which compromise you want, for the applications in the
+`appsRaisingOnFocus` quirk:
+
+    selfRaisingApps=focus    # focus the hovered window properly, and it comes forward
+    selfRaisingApps=quiet    # hand it the keyboard without those events: it stays put,
+                             # and it chooses which of its own windows takes the keyboard
+    selfRaisingApps=skip     # do not touch it at all
+
+`quiet` is what you want if a browser jumping in front of a chat window is the thing that annoys you.
+It suits one window per screen better than several, since with several the browser decides which one
+you are typing into.
 
 ### App quirks
 

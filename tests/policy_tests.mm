@@ -487,6 +487,24 @@ static void testConfigValues(void) {
     CHECK_EQ_INT(bogus.disableKey, 0);
     CHECK_EQ_INT(bogus.warnings.count, 1);
 
+    CASE("self raising apps are focused normally unless asked otherwise");
+    ARConfig *raising = ARConfigFromValues(@{}, nil);
+    CHECK_EQ_INT(raising.selfRaisingApps, ARSelfRaisingFocus);
+    CHECK_EQ_INT(ARConfigFromValues(@{@"selfRaisingApps": @"quiet"}, nil).selfRaisingApps,
+                 ARSelfRaisingQuiet);
+    CHECK_EQ_INT(ARConfigFromValues(@{@"selfRaisingApps": @" SKIP "}, nil).selfRaisingApps,
+                 ARSelfRaisingSkip);
+    ARConfig *bogusMode = ARConfigFromValues(@{@"selfRaisingApps": @"loud"}, nil);
+    CHECK_EQ_INT(bogusMode.selfRaisingApps, ARSelfRaisingFocus);
+    CHECK_EQ_INT(bogusMode.warnings.count, 1);
+
+    CASE("that mode survives a round trip");
+    for (NSString *name in @[@"focus", @"quiet", @"skip"]) {
+        ARSelfRaisingApps mode = ARSelfRaisingFocus;
+        CHECK(ARSelfRaisingParse(name, &mode));
+        CHECK_EQ_STR(ARSelfRaisingDescribe(mode), name);
+    }
+
     CASE("everything that used to be a compile time flag has a default");
     config = ARConfigFromValues(@{}, nil);
     CHECK(!config.legacyActivation);

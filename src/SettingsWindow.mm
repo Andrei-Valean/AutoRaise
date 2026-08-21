@@ -477,6 +477,15 @@ static ARRaiseMode ARModeForConfig(ARConfig *config) {
         on: config.ignoreSpaceChanged];
     space.onChange = ^(BOOL on) { [weakSelf setBool: @"ignoreSpaceChanged" to: on]; };
 
+    NSArray *selfRaisingValues = @[@"focus", @"quiet", @"skip"];
+    ARPopupRow *selfRaising = [[ARPopupRow alloc] initWithTitle: @"Apps that raise themselves"
+        subtitle: @"Browsers mostly: they come forward the moment they are focused"
+        choices: @[@"Let them come forward", @"Focus quietly, no raise", @"Leave them alone"]
+        selected: config.selfRaisingApps];
+    selfRaising.onChange = ^(NSInteger index) {
+        [weakSelf set: @"selfRaisingApps" to: selfRaisingValues[index]];
+    };
+
     ARSliderRow *delta = [[ARSliderRow alloc] initWithTitle: @"Ignore small movements"
         min: 0 max: 10 value: config.mouseDelta];
     delta.snapsToIntegers = YES;
@@ -488,9 +497,12 @@ static ARRaiseMode ARModeForConfig(ARConfig *config) {
         [weakSelf set: @"mouseDelta" to: [NSString stringWithFormat: @"%.0f", value]];
     };
 
-    [self addCard: @[stop, space, delta]];
+    [self addCard: @[stop, space, delta, selfRaising]];
     [self addFootnote: @"Raise a shaky hand's threshold if windows come forward while you are "
-                       "only passing over them."];
+                       "only passing over them. Focusing a browser quietly keeps it where it "
+                       "is, but the browser then decides which of its own windows takes the "
+                       "keyboard, so it suits one window per screen better than several. "
+                       "\"AutoRaise -dumpQuirks\" lists the applications this applies to."];
 
     // Focus without raise is invisible unless something says which window is
     // listening, so the ring belongs next to the setting that causes it.

@@ -15,6 +15,22 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+// What to do about applications that bring themselves to the front the moment
+// they are focused, which is most browsers. Focusing such a window needs events
+// posted into the application, and those are what it reacts to.
+typedef NS_ENUM(NSInteger, ARSelfRaisingApps) {
+    // Focus the hovered window properly and accept that it comes forward.
+    ARSelfRaisingFocus = 0,
+    // Hand the application the keyboard without those events: it does not come
+    // forward, and it decides which of its own windows takes the keyboard.
+    ARSelfRaisingQuiet,
+    // Do not touch them at all while nothing is meant to be raised.
+    ARSelfRaisingSkip,
+};
+
+BOOL ARSelfRaisingParse(NSString *_Nullable text, ARSelfRaisingApps *mode);
+NSString *ARSelfRaisingDescribe(ARSelfRaisingApps mode);
+
 // A colour as stored in the settings file: "#0A84FF", or "accent" to follow
 // whatever accent colour the system is set to.
 typedef struct {
@@ -79,6 +95,9 @@ NSString *ARRingPlacementDescribe(ARRingPlacement placement);
 // EXPERIMENTAL_FOCUS_FIRST at compile time.
 @property (nonatomic) BOOL legacyActivation;
 @property (nonatomic) BOOL windowServerHitTest;
+
+// Which of the three the apps in the appsRaisingOnFocus quirk get.
+@property (nonatomic) ARSelfRaisingApps selfRaisingApps;
 
 @property (nonatomic) BOOL menuBarIcon;
 // Whether raising is switched on at all, so pausing survives a restart.

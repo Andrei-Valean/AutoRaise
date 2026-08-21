@@ -29,6 +29,7 @@ static NSString *const kWindowServerHitTest = @"windowServerHitTest";
 static NSString *const kMenuBarIcon = @"menuBarIcon";
 static NSString *const kLiveReload = @"liveReload";
 static NSString *const kVerbose = @"verbose";
+static NSString *const kSelfRaisingApps = @"selfRaisingApps";
 static NSString *const kFocusRing = @"focusRing";
 static NSString *const kFocusRingColor = @"focusRingColor";
 static NSString *const kFocusRingStyle = @"focusRingStyle";
@@ -50,7 +51,7 @@ static NSArray<NSString *> *ARConfigKeys(void) {
              kInvertIgnoreApps, kIgnoreApps, kIgnoreTitles, kStayFocusedBundleIds,
              kDisableKey, kMouseDelta, kLegacyActivation, kWindowServerHitTest,
              kMenuBarIcon, kLiveReload, kVerbose, kEnabled, kToggleShortcut,
-             kFocusRing, kFocusRingColor, kFocusRingStyle, kFocusRingWidth,
+             kSelfRaisingApps, kFocusRing, kFocusRingColor, kFocusRingStyle, kFocusRingWidth,
              kFocusRingGlow, kFocusRingRadius, kFocusRingOpacity, kFocusRingPulse,
              kFocusRingSpread, kFocusRingFalloff,
              kRaiseShortcut, kConfig];
@@ -76,6 +77,28 @@ static NSArray<NSString *> *ARConfigKeys(void) {
 }
 
 @end
+
+BOOL ARSelfRaisingParse(NSString *text, ARSelfRaisingApps *mode) {
+    static NSDictionary<NSString *, NSNumber *> *names = nil;
+    if (!names) {
+        names = @{@"focus": @(ARSelfRaisingFocus), @"raise": @(ARSelfRaisingFocus),
+                  @"quiet": @(ARSelfRaisingQuiet), @"quietly": @(ARSelfRaisingQuiet),
+                  @"skip": @(ARSelfRaisingSkip), @"ignore": @(ARSelfRaisingSkip)};
+    }
+    NSNumber *found = names[[[text stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceCharacterSet]] lowercaseString] ?: @""];
+    if (!found) { return NO; }
+    if (mode) { *mode = (ARSelfRaisingApps) found.integerValue; }
+    return YES;
+}
+
+NSString *ARSelfRaisingDescribe(ARSelfRaisingApps mode) {
+    switch (mode) {
+        case ARSelfRaisingQuiet: return @"quiet";
+        case ARSelfRaisingSkip: return @"skip";
+        default: return @"focus";
+    }
+}
 
 ARRingStyle ARRingStyleDefaults(void) {
     ARRingStyle style = {ARRingPlacementAround, 2.0, 7.0, 11.0, 1.0, 1.1, 0.6, 0.7};
@@ -386,6 +409,14 @@ ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
         }
     }
 
+    ARSelfRaisingApps selfRaising = ARSelfRaisingFocus;
+    if (values[kSelfRaisingApps].length &&
+        !ARSelfRaisingParse(values[kSelfRaisingApps], &selfRaising)) {
+        [allWarnings addObject: [NSString stringWithFormat:
+            @"selfRaisingApps \"%@\" is not focus, quiet or skip", values[kSelfRaisingApps]]];
+    }
+    config.selfRaisingApps = selfRaising;
+
     config.focusRing = ARBool(values, kFocusRing, YES);
     config.focusRingStyle = ARRingStyleFromValues(values, allWarnings);
     BOOL colorOk = YES;
@@ -519,6 +550,13 @@ NSString *ARConfigTemplate(void) {
             "#altTaskSwitcher=false\n"
             "\n"
             "requireMouseStop=true\n"
+            "\n"
+            "# Browsers and some editors bring themselves to the front the moment they\n"
+            "# are focused. focus lets them; quiet hands them the keyboard without the\n"
+            "# events they react to, so they stay put, at the cost of the application\n"
+            "# choosing which of its own windows takes the keyboard; skip leaves them\n"
+            "# alone. The list is the appsRaisingOnFocus quirk.\n"
+            "selfRaisingApps=focus\n"
             "ignoreSpaceChanged=false\n"
             "mouseDelta=0.0\n"
             "\n"
@@ -572,6 +610,7 @@ NSString *ARConfigUsage(void) {
             "  -warpX <0.5> -warpY <0.5> -scale <2.0>\n"
             "  -altTaskSwitcher <true|false>\n"
             "  -requireMouseStop <true|false>\n"
+            "  -selfRaisingApps <focus|quiet|skip>   apps that raise themselves on focus\n"
             "  -ignoreSpaceChanged <true|false>\n"
             "  -invertDisableKey <true|false>\n"
             "  -invertIgnoreApps <true|false>\n"

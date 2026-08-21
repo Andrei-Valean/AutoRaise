@@ -81,7 +81,8 @@ static void window_manager_make_key_window(ProcessSerialNumber *_window_psn, uin
 
 static void window_manager_focus_window_without_raise(
     ProcessSerialNumber *_window_psn, uint32_t window_id,
-    ProcessSerialNumber *_focused_window_psn, uint32_t focused_window_id, BOOL verbose
+    ProcessSerialNumber *_focused_window_psn, uint32_t focused_window_id,
+    BOOL makeKeyWindow, BOOL verbose
 ) {
     if (verbose) { NSLog(@"Focus"); }
     if (_focused_window_psn) {
@@ -113,7 +114,11 @@ static void window_manager_focus_window_without_raise(
     }
 
     _SLPSSetFrontProcessWithOptions(_window_psn, window_id, kCPSUserGenerated);
-    window_manager_make_key_window(_window_psn, window_id);
+    // These are what tell the application which of its windows takes the
+    // keyboard, and they are also what an application that raises itself reacts
+    // to. Leaving them out keeps such an application where it is, at the price
+    // of letting it choose the window.
+    if (makeKeyWindow) { window_manager_make_key_window(_window_psn, window_id); }
 }
 #endif
 
@@ -1042,10 +1047,29 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
             [self raiseAndActivate: _mouseWindow pid: mouse.pid];
             return;
         }
-        if (!decision.appRaisesOnFocus || _config.raiseAfterFocusTicks == 0) {
-            window_manager_focus_window_without_raise(&mouseWindowPsn, mouse.windowId,
-                _focusedWindowPsn, focused.windowId, _config.verbose);
+        // Applications that bring themselves to the front when focused get one
+        // of three treatments, see selfRaisingApps.
+        BOOL makeKeyWindow = YES;
+        if (decision.appRaisesOnFocus) {
+            switch (_config.selfRaisingApps) {
+                case ARSelfRaisingSkip:
+                    if (_config.verbose) {
+                        NSLog(@"%@ raises itself when focused, leaving it alone", mouse.appName);
+                    }
+                    return;
+                case ARSelfRaisingQuiet:
+                    makeKeyWindow = NO;
+                    if (_config.verbose) {
+                        NSLog(@"%@ raises itself when focused, focusing it quietly",
+                              mouse.appName);
+                    }
+                    break;
+                default:
+                    break;
+            }
         }
+        window_manager_focus_window_without_raise(&mouseWindowPsn, mouse.windowId,
+            _focusedWindowPsn, focused.windowId, makeKeyWindow, _config.verbose);
 
         if (_lastFocusedWindow) { CFRelease(_lastFocusedWindow); }
         _lastFocusedWindow = (AXUIElementRef) CFRetain(_mouseWindow);
