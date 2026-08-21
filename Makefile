@@ -130,7 +130,7 @@ identity:
 	@codesign -dvv AutoRaise.app 2>&1 | grep -E "^Authority=|^Signature=" | head -1 || true
 
 clean:
-	rm -f AutoRaise AutoRaise-*.dmg
+	rm -f AutoRaise AutoRaise*.dmg
 	rm -rf AutoRaise.app build
 
 run: all
