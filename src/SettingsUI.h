@@ -99,6 +99,16 @@ NSTextField *ARLabel(NSString *text, NSFont *font, NSColor *color);
 - (void)setSelected:(NSInteger)index;
 @end
 
+// A row with a menu on the right, for a choice too long for segments.
+@interface ARPopupRow : ARRow
+@property (nonatomic, readonly) NSPopUpButton *popup;
+@property (nonatomic, copy, nullable) void (^onChange)(NSInteger index);
+- (instancetype)initWithTitle:(NSString *)title
+                     subtitle:(nullable NSString *)subtitle
+                      choices:(NSArray<NSString *> *)choices
+                     selected:(NSInteger)selected;
+@end
+
 @interface ARFieldRow : ARRow
 @property (nonatomic, readonly) NSTextField *field;
 @property (nonatomic, copy, nullable) void (^onChange)(NSString *text);

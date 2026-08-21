@@ -615,19 +615,51 @@ static void testColors(void) {
 
     CASE("the outline style has usable defaults");
     ARRingStyle style = ARRingStyleDefaults();
-    CHECK(!style.insideFrame);
+    CHECK_EQ_INT(style.placement, ARRingPlacementAround);
+    CHECK(style.spread > 0 && style.spread <= 1);
+    CHECK(style.falloff >= 0 && style.falloff <= 1);
     CHECK(style.width > 0);
     CHECK(style.pulseSeconds > 0);
     config = ARConfigFromValues(@{}, nil);
     CHECK_EQ_INT(config.focusRingStyle.glow, style.glow);
 
-    CASE("outline and inline are both spellable");
-    CHECK(ARConfigFromValues(@{@"focusRingStyle": @"inline"}, nil).focusRingStyle.insideFrame);
-    CHECK(ARConfigFromValues(@{@"focusRingStyle": @"inside"}, nil).focusRingStyle.insideFrame);
-    CHECK(!ARConfigFromValues(@{@"focusRingStyle": @"outline"}, nil).focusRingStyle.insideFrame);
+    CASE("every placement is spellable, old names included");
+    CHECK_EQ_INT(ARConfigFromValues(@{@"focusRingStyle": @"inline"}, nil).focusRingStyle.placement,
+                 ARRingPlacementInside);
+    CHECK_EQ_INT(ARConfigFromValues(@{@"focusRingStyle": @"inside"}, nil).focusRingStyle.placement,
+                 ARRingPlacementInside);
+    CHECK_EQ_INT(ARConfigFromValues(@{@"focusRingStyle": @"OUTSIDE"}, nil).focusRingStyle.placement,
+                 ARRingPlacementAround);
+    CHECK_EQ_INT(ARConfigFromValues(@{@"focusRingStyle": @"top"}, nil).focusRingStyle.placement,
+                 ARRingPlacementTop);
+    CHECK_EQ_INT(ARConfigFromValues(@{@"focusRingStyle": @" Right "}, nil).focusRingStyle.placement,
+                 ARRingPlacementRight);
     ARConfig *bogusStyle = ARConfigFromValues(@{@"focusRingStyle": @"sideways"}, nil);
-    CHECK(!bogusStyle.focusRingStyle.insideFrame);
+    CHECK_EQ_INT(bogusStyle.focusRingStyle.placement, ARRingPlacementAround);
     CHECK_EQ_INT(bogusStyle.warnings.count, 1);
+
+    CASE("only the edge placements are bars");
+    CHECK(!ARRingPlacementIsBar(ARRingPlacementAround));
+    CHECK(!ARRingPlacementIsBar(ARRingPlacementInside));
+    CHECK(ARRingPlacementIsBar(ARRingPlacementTop));
+    CHECK(ARRingPlacementIsBar(ARRingPlacementBottom));
+    CHECK(ARRingPlacementIsBar(ARRingPlacementLeft));
+    CHECK(ARRingPlacementIsBar(ARRingPlacementRight));
+
+    CASE("a placement survives a round trip through the settings file");
+    for (NSString *name in @[@"outline", @"inline", @"top", @"bottom", @"left", @"right"]) {
+        ARRingPlacement parsed = ARRingPlacementAround;
+        CHECK(ARRingPlacementParse(name, &parsed));
+        CHECK_EQ_STR(ARRingPlacementDescribe(parsed), name);
+    }
+
+    CASE("the bar dimensions are clamped like the rest");
+    ARConfig *bar = ARConfigFromValues(@{@"focusRingStyle": @"top",
+                                         @"focusRingSpread": @"5",
+                                         @"focusRingFalloff": @"-1"}, nil);
+    CHECK_EQ_INT(bar.focusRingStyle.spread * 100, 100);
+    CHECK_EQ_INT(bar.focusRingStyle.falloff, 0);
+    CHECK_EQ_INT(bar.warnings.count, 2);
 
     CASE("silly dimensions are clamped and reported, not refused");
     ARConfig *clamped = ARConfigFromValues(@{@"focusRingWidth": @"400",

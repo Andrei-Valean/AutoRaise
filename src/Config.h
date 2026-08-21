@@ -25,17 +25,33 @@ typedef struct {
 ARColor ARColorParse(NSString *_Nullable text, BOOL *_Nullable ok);
 NSString *ARColorDescribe(ARColor color);
 
-// How the outline around a focused window is drawn.
+// Where the highlight sits. The first two trace the whole window; the rest draw
+// a single bar along one edge, brightest in the middle and fading out towards
+// its ends.
+typedef NS_ENUM(NSInteger, ARRingPlacement) {
+    ARRingPlacementAround = 0,
+    ARRingPlacementInside,
+    ARRingPlacementTop,
+    ARRingPlacementBottom,
+    ARRingPlacementLeft,
+    ARRingPlacementRight,
+};
+
 typedef struct {
-    BOOL insideFrame;      // inside the window edge rather than around it
-    CGFloat width;         // the crisp line, in points
-    CGFloat glow;          // soft spread either side of it, 0 for none
-    CGFloat radius;        // corner radius
+    ARRingPlacement placement;
+    CGFloat width;         // the crisp line, or the depth of a bar, in points
+    CGFloat glow;          // soft spread beyond it, 0 for none
+    CGFloat radius;        // corner radius, and the rounding of a bar's ends
     CGFloat opacity;       // at its brightest
     CGFloat pulseSeconds;  // one breath in and out, 0 to hold steady
+    CGFloat spread;        // bars: how much of the edge they cover, 0 to 1
+    CGFloat falloff;       // bars: how softly they fade out, 0 hard to 1 gentle
 } ARRingStyle;
 
 ARRingStyle ARRingStyleDefaults(void);
+BOOL ARRingPlacementIsBar(ARRingPlacement placement);
+BOOL ARRingPlacementParse(NSString *_Nullable text, ARRingPlacement *placement);
+NSString *ARRingPlacementDescribe(ARRingPlacement placement);
 
 @interface ARConfig : NSObject
 

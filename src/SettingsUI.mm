@@ -374,6 +374,33 @@ static void ARPin(NSView *view, NSView *container, CGFloat leading, CGFloat trai
 
 @end
 
+//-------------------------------------------------- popup -------------------------------------------------
+
+@implementation ARPopupRow
+
+- (instancetype)initWithTitle:(NSString *)title
+                     subtitle:(NSString *)subtitle
+                      choices:(NSArray<NSString *> *)choices
+                     selected:(NSInteger)selected {
+    NSPopUpButton *popup = [[NSPopUpButton alloc] initWithFrame: NSZeroRect pullsDown: NO];
+    [popup addItemsWithTitles: choices];
+    if (selected >= 0 && selected < (NSInteger) choices.count) {
+        [popup selectItemAtIndex: selected];
+    }
+    if ((self = [super initWithTitle: title subtitle: subtitle accessory: popup])) {
+        _popup = popup;
+        popup.target = self;
+        popup.action = @selector(changed:);
+    }
+    return self;
+}
+
+- (void)changed:(id)sender {
+    if (self.onChange) { self.onChange(_popup.indexOfSelectedItem); }
+}
+
+@end
+
 //-------------------------------------------------- field -------------------------------------------------
 
 @implementation ARFieldRow

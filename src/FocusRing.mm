@@ -20,9 +20,10 @@
 @property (nonatomic, copy) NSArray<NSValue *> *obscured;
 @end
 
-// Room the glow needs outside the window frame to fade out in.
+// Room the glow needs outside the window frame to fade out in. Only the style
+// that traces around the window needs any: the others draw within it.
 static CGFloat ARRingMargin(ARRingStyle style) {
-    if (style.insideFrame) { return 0; }
+    if (style.placement != ARRingPlacementAround) { return 0; }
     return ceil(style.glow + style.width) + 1;
 }
 
@@ -46,7 +47,7 @@ static CGFloat ARRingMargin(ARRingStyle style) {
     if (width <= 0) { return; }
     NSRect rect;
     CGFloat radius;
-    if (_style.insideFrame) {
+    if (_style.placement != ARRingPlacementAround) {
         rect = NSInsetRect(self.bounds, width / 2, width / 2);
         radius = fmax(0, _style.radius - width / 2);
     } else {
@@ -63,6 +64,94 @@ static CGFloat ARRingMargin(ARRingStyle style) {
     [path stroke];
 }
 
+// A bar along one edge: solid for the first few points, fading away from the
+// edge, and fading out towards its two ends. Brightest in the middle, which is
+// where the window is.
+- (void)drawBar {
+    NSRect bounds = self.bounds;
+    CGFloat depth = fmax(1, _style.width + _style.glow);
+    BOOL horizontal = _style.placement == ARRingPlacementTop ||
+                      _style.placement == ARRingPlacementBottom;
+    CGFloat along = horizontal ? bounds.size.width : bounds.size.height;
+    CGFloat length = fmax(12, along * _style.spread);
+
+    NSRect bar;
+    CGPoint edgeStart, edgeEnd;      // across the bar: from the window edge inwards
+    CGPoint alongStart, alongEnd;    // from one end of the bar to the other
+    switch (_style.placement) {
+        case ARRingPlacementBottom:
+            bar = NSMakeRect(NSMidX(bounds) - length / 2, 0, length, depth);
+            edgeStart = NSMakePoint(0, NSMinY(bar));
+            edgeEnd = NSMakePoint(0, NSMinY(bar) + depth);
+            break;
+        case ARRingPlacementLeft:
+            bar = NSMakeRect(0, NSMidY(bounds) - length / 2, depth, length);
+            edgeStart = NSMakePoint(NSMinX(bar), 0);
+            edgeEnd = NSMakePoint(NSMinX(bar) + depth, 0);
+            break;
+        case ARRingPlacementRight:
+            bar = NSMakeRect(NSMaxX(bounds) - depth, NSMidY(bounds) - length / 2, depth, length);
+            edgeStart = NSMakePoint(NSMaxX(bar), 0);
+            edgeEnd = NSMakePoint(NSMaxX(bar) - depth, 0);
+            break;
+        default:   // top
+            bar = NSMakeRect(NSMidX(bounds) - length / 2, NSMaxY(bounds) - depth, length, depth);
+            edgeStart = NSMakePoint(0, NSMaxY(bar));
+            edgeEnd = NSMakePoint(0, NSMaxY(bar) - depth);
+            break;
+    }
+    if (horizontal) {
+        alongStart = NSMakePoint(NSMinX(bar), 0);
+        alongEnd = NSMakePoint(NSMaxX(bar), 0);
+    } else {
+        alongStart = NSMakePoint(0, NSMinY(bar));
+        alongEnd = NSMakePoint(0, NSMaxY(bar));
+    }
+
+    CGContextRef context = NSGraphicsContext.currentContext.CGContext;
+    CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    NSColor *colour = [[self strokeColorWithAlpha: 1.0]
+        colorUsingColorSpace: NSColorSpace.sRGBColorSpace];
+    CGFloat red = colour.redComponent, green = colour.greenComponent;
+    CGFloat blue = colour.blueComponent, peak = colour.alphaComponent * _style.opacity;
+
+    CGContextSaveGState(context);
+    // Rounded ends, when the corner radius allows for any.
+    CGFloat radius = fmin(_style.radius, fmin(bar.size.width, bar.size.height) / 2);
+    NSBezierPath *shape = [NSBezierPath bezierPathWithRoundedRect: bar
+        xRadius: radius yRadius: radius];
+    [shape addClip];
+
+    // Everything is drawn into a layer so the fade towards the ends can be
+    // applied to it as a whole, by multiplying its alpha.
+    CGContextBeginTransparencyLayerWithRect(context, NSRectToCGRect(bar), NULL);
+
+    CGFloat solid = _style.width / depth;
+    CGFloat depthStops[3] = {0, fmin(solid, 0.98), 1};
+    CGFloat depthColours[12] = {red, green, blue, peak,
+                                red, green, blue, peak,
+                                red, green, blue, 0};
+    CGGradientRef intoWindow = CGGradientCreateWithColorComponents(space, depthColours,
+                                                                  depthStops, 3);
+    CGContextDrawLinearGradient(context, intoWindow, edgeStart, edgeEnd,
+        kCGGradientDrawsBeforeStartLocation | kCGGradientDrawsAfterEndLocation);
+    CGGradientRelease(intoWindow);
+
+    // falloff 0 stops abruptly at the ends, 1 fades across the whole bar.
+    CGFloat fade = fmax(0.001, _style.falloff * 0.5);
+    CGFloat alongStops[4] = {0, fade, 1 - fade, 1};
+    CGFloat alongColours[16] = {1, 1, 1, 0,  1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 0};
+    CGGradientRef towardsEnds = CGGradientCreateWithColorComponents(space, alongColours,
+                                                                   alongStops, 4);
+    CGContextSetBlendMode(context, kCGBlendModeDestinationIn);
+    CGContextDrawLinearGradient(context, towardsEnds, alongStart, alongEnd, 0);
+    CGGradientRelease(towardsEnds);
+
+    CGContextEndTransparencyLayer(context);
+    CGContextRestoreGState(context);
+    CGColorSpaceRelease(space);
+}
+
 - (void)drawRect:(NSRect)dirty {
     if (_obscured.count) {
         // Even-odd winding turns the outer rectangle plus the covered ones into
@@ -73,6 +162,7 @@ static CGFloat ARRingMargin(ARRingStyle style) {
         clip.windingRule = NSWindingRuleEvenOdd;
         [clip setClip];
     }
+    if (ARRingPlacementIsBar(_style.placement)) { [self drawBar]; return; }
     if (_style.glow > 0) {
         [self strokeWidth: _style.width + _style.glow * 2 alpha: 0.12];
         [self strokeWidth: _style.width + _style.glow alpha: 0.26];
@@ -157,7 +247,7 @@ BOOL ARFocusRingVerbose = NO;
 // is worse than one a couple of points further in.
 - (ARRingStyle)styleForWindowFrame:(CGRect)frame {
     ARRingStyle style = _style;
-    if (style.insideFrame) { return style; }
+    if (style.placement != ARRingPlacementAround) { return style; }
 
     CGFloat margin = ARRingMargin(style);
     CGRect wanted = CGRectInset(frame, -margin, -margin);
@@ -166,7 +256,7 @@ BOOL ARFocusRingVerbose = NO;
     CGPoint centre = CGPointMake(CGRectGetMidX(frame), CGRectGetMidY(frame));
     if (ARScreenAtPoint(centre, &display, &menuBarHeight) &&
         !CGRectContainsRect(display, wanted)) {
-        style.insideFrame = YES;
+        style.placement = ARRingPlacementInside;
         if (ARFocusRingVerbose) {
             NSLog(@"Window fills its display, drawing the ring inside the edge");
         }

@@ -538,16 +538,22 @@ static ARRaiseMode ARModeForConfig(ARConfig *config) {
     ARRingStyle style = config.focusRingStyle;
     NSMutableArray *styleRows = [NSMutableArray array];
 
-    ARSegmentRow *placement = [[ARSegmentRow alloc] initWithTitle: @"Draw it"
-        subtitle: @"Around the window edge, or just inside it"
-        choices: @[@"Around", @"Inside"] selected: style.insideFrame ? 1 : 0];
+    // The names the settings file uses, in the order the menu shows them.
+    NSArray *placements = @[@"outline", @"inline", @"top", @"bottom", @"left", @"right"];
+    ARPopupRow *placement = [[ARPopupRow alloc] initWithTitle: @"Draw it"
+        subtitle: @"Trace the whole window, or glow along one edge"
+        choices: @[@"Around the window", @"Inside the edge", @"Along the top",
+                   @"Along the bottom", @"Down the left", @"Down the right"]
+        selected: style.placement];
     placement.onChange = ^(NSInteger index) {
-        [weakSelf set: @"focusRingStyle" to: index == 1 ? @"inline" : @"outline"];
+        [weakSelf set: @"focusRingStyle" to: placements[index]];
+        [weakSelf rebuild];   // the bar settings appear and disappear with it
     };
     [styleRows addObject: placement];
 
-    ARSliderRow *thickness = [[ARSliderRow alloc] initWithTitle: @"Thickness"
-        min: 0.5 max: 10 value: style.width];
+    BOOL isBar = ARRingPlacementIsBar(style.placement);
+    ARSliderRow *thickness = [[ARSliderRow alloc] initWithTitle:
+        isBar ? @"Depth" : @"Thickness" min: 0.5 max: 10 value: style.width];
     thickness.format = ^NSString *(double value) {
         return [NSString stringWithFormat: @"%.1f pt", value];
     };
@@ -567,7 +573,35 @@ static ARRaiseMode ARModeForConfig(ARConfig *config) {
     };
     [styleRows addObject: glow];
 
-    ARSliderRow *corners = [[ARSliderRow alloc] initWithTitle: @"Corner radius"
+    if (isBar) {
+        ARSliderRow *spread = [[ARSliderRow alloc] initWithTitle: @"Length"
+            min: 5 max: 100 value: style.spread * 100];
+        spread.snapsToIntegers = YES;
+        spread.format = ^NSString *(double value) {
+            return value >= 100 ? @"The whole edge"
+                                : [NSString stringWithFormat: @"%.0f%% of the edge", value];
+        };
+        spread.onCommit = ^(double value) {
+            [weakSelf set: @"focusRingSpread" to: [NSString stringWithFormat: @"%.2f", value / 100]];
+        };
+        [styleRows addObject: spread];
+
+        ARSliderRow *falloff = [[ARSliderRow alloc] initWithTitle: @"Fade at the ends"
+            min: 0 max: 100 value: style.falloff * 100];
+        falloff.snapsToIntegers = YES;
+        falloff.format = ^NSString *(double value) {
+            if (value == 0) { return @"Cut off"; }
+            return value >= 100 ? @"All the way in"
+                                : [NSString stringWithFormat: @"%.0f%%", value];
+        };
+        falloff.onCommit = ^(double value) {
+            [weakSelf set: @"focusRingFalloff" to: [NSString stringWithFormat: @"%.2f", value / 100]];
+        };
+        [styleRows addObject: falloff];
+    }
+
+    ARSliderRow *corners = [[ARSliderRow alloc] initWithTitle: isBar ? @"Rounded ends"
+                                                              : @"Corner radius"
         min: 0 max: 32 value: style.radius];
     corners.snapsToIntegers = YES;
     corners.format = ^NSString *(double value) {
@@ -608,9 +642,16 @@ static ARRaiseMode ARModeForConfig(ARConfig *config) {
             [(ARRow *) row setRowEnabled: config.focusRing];
         }
     }
-    [self addFootnote: @"Changes show up on the next window you hover. Glow at none with a "
-                       "thickness of one gives a plain hairline; a wide glow and no pulse gives "
-                       "a steady halo."];
+    if (isBar) {
+        [self addFootnote: @"Changes show up on the next window you hover. Depth is how far the "
+                           "bar reaches in from the edge, and the glow is how much of that is "
+                           "soft rather than solid."];
+    } else {
+        [self addFootnote: @"Changes show up on the next window you hover. Glow at none with a "
+                           "thickness of one gives a plain hairline; a wide glow and no pulse "
+                           "gives a steady halo. A window filling its display is outlined just "
+                           "inside its edge, since there is no room around it."];
+    }
 }
 
 - (void)ringColorChanged:(NSColorWell *)well {

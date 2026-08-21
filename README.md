@@ -80,12 +80,14 @@ comments, ordering and any settings a future version adds are left alone.
     # Outline the window that has the keyboard but was not raised.
     focusRing=true
     focusRingColor=accent    # a hex colour such as #0A84FF, or accent
-    focusRingStyle=outline   # outline draws around the window edge, inline just inside it
-    focusRingWidth=2         # the crisp line, in points
-    focusRingGlow=7          # soft spread either side of it, 0 for a plain line
-    focusRingRadius=11       # corner radius
+    focusRingStyle=outline   # outline, inline, or top, bottom, left, right for a bar
+    focusRingWidth=2         # the crisp line, or how deep a bar reaches, in points
+    focusRingGlow=7          # soft spread beyond it, 0 for a plain line
+    focusRingRadius=11       # corner radius, and the rounding of a bar's ends
     focusRingOpacity=1.0     # at its brightest
     focusRingPulse=1.1       # seconds per breath, 0 to hold steady
+    focusRingSpread=0.6      # bars: how much of the edge they cover
+    focusRingFalloff=0.7     # bars: 0 cuts off at the ends, 1 fades the whole way
 
     # Set by the window; all of these survive a restart.
     enabled=true
@@ -113,12 +115,21 @@ AutoRaise draws a pulsing outline around the one holding the keyboard, and `rais
 that window to the front when you do want it in front after all. The outline disappears as soon as
 you click, focus something else, or raise it.
 
-The outline is clipped to the part of the window you can actually see: a window in front of the
-outlined one hides that stretch of the outline too, instead of the outline being painted over it.
-It follows the window as it is moved or resized, and re-checks what is covering it four times a
-second while it is on screen. Everything about how it looks is a setting: around the edge or just
-inside it, thickness, glow, corner radius, brightness, how fast it breathes, and the colour, which
-takes a hex value or `accent` to follow the system.
+The highlight can trace the whole window or glow along one edge of it:
+
+- `outline` traces around the window, `inline` just inside its edge. A window filling its display
+  is drawn inline whatever the setting says, because there is no room around it.
+- `top`, `bottom`, `left` and `right` draw a single bar along that edge, solid in the middle and
+  fading out towards its ends. `focusRingSpread` sets how much of the edge it covers and
+  `focusRingFalloff` how gently it fades: 0 cuts off, 1 fades across the whole bar. For a bar,
+  `focusRingWidth` is how far the solid part reaches in from the edge and `focusRingGlow` how far
+  the soft part carries on.
+
+Either way it is clipped to the part of the window you can actually see: a window in front of the
+highlighted one hides that stretch of it, instead of it being painted over the top. It follows the
+window as it is moved or resized, and re-checks what is covering it four times a second while it is
+on screen. Colour, brightness, corner rounding and how fast it breathes are all settings, and the
+colour takes a hex value or `accent` to follow the system.
 
 It works through undocumented SkyLight calls, so treat it as experimental: **there is no guarantee
 it keeps working in future macOS versions**. It used to require a separate build with

@@ -37,6 +37,8 @@ static NSString *const kFocusRingGlow = @"focusRingGlow";
 static NSString *const kFocusRingRadius = @"focusRingRadius";
 static NSString *const kFocusRingOpacity = @"focusRingOpacity";
 static NSString *const kFocusRingPulse = @"focusRingPulse";
+static NSString *const kFocusRingSpread = @"focusRingSpread";
+static NSString *const kFocusRingFalloff = @"focusRingFalloff";
 static NSString *const kRaiseShortcut = @"raiseShortcut";
 static NSString *const kEnabled = @"enabled";
 static NSString *const kToggleShortcut = @"toggleShortcut";
@@ -50,6 +52,7 @@ static NSArray<NSString *> *ARConfigKeys(void) {
              kMenuBarIcon, kLiveReload, kVerbose, kEnabled, kToggleShortcut,
              kFocusRing, kFocusRingColor, kFocusRingStyle, kFocusRingWidth,
              kFocusRingGlow, kFocusRingRadius, kFocusRingOpacity, kFocusRingPulse,
+             kFocusRingSpread, kFocusRingFalloff,
              kRaiseShortcut, kConfig];
 }
 
@@ -75,8 +78,40 @@ static NSArray<NSString *> *ARConfigKeys(void) {
 @end
 
 ARRingStyle ARRingStyleDefaults(void) {
-    ARRingStyle style = {NO, 2.0, 7.0, 11.0, 1.0, 1.1};
+    ARRingStyle style = {ARRingPlacementAround, 2.0, 7.0, 11.0, 1.0, 1.1, 0.6, 0.7};
     return style;
+}
+
+BOOL ARRingPlacementIsBar(ARRingPlacement placement) {
+    return placement >= ARRingPlacementTop;
+}
+
+// Both the historical spellings and the four edges.
+BOOL ARRingPlacementParse(NSString *text, ARRingPlacement *placement) {
+    static NSDictionary<NSString *, NSNumber *> *names = nil;
+    if (!names) {
+        names = @{@"outline": @(ARRingPlacementAround), @"outside": @(ARRingPlacementAround),
+                  @"around": @(ARRingPlacementAround),
+                  @"inline": @(ARRingPlacementInside), @"inside": @(ARRingPlacementInside),
+                  @"top": @(ARRingPlacementTop), @"bottom": @(ARRingPlacementBottom),
+                  @"left": @(ARRingPlacementLeft), @"right": @(ARRingPlacementRight)};
+    }
+    NSNumber *found = names[[[text stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceCharacterSet]] lowercaseString] ?: @""];
+    if (!found) { return NO; }
+    if (placement) { *placement = (ARRingPlacement) found.integerValue; }
+    return YES;
+}
+
+NSString *ARRingPlacementDescribe(ARRingPlacement placement) {
+    switch (placement) {
+        case ARRingPlacementInside: return @"inline";
+        case ARRingPlacementTop: return @"top";
+        case ARRingPlacementBottom: return @"bottom";
+        case ARRingPlacementLeft: return @"left";
+        case ARRingPlacementRight: return @"right";
+        default: return @"outline";
+    }
 }
 
 // Accepts "accent", "#RGB", "#RRGGBB" and "#RRGGBBAA", with or without the hash.
@@ -275,15 +310,10 @@ static ARRingStyle ARRingStyleFromValues(NSDictionary *values, NSMutableArray *w
     ARRingStyle style = ARRingStyleDefaults();
 
     NSString *placement = values[kFocusRingStyle];
-    if (placement.length) {
-        if ([placement caseInsensitiveCompare: @"inline"] == NSOrderedSame ||
-            [placement caseInsensitiveCompare: @"inside"] == NSOrderedSame) {
-            style.insideFrame = YES;
-        } else if ([placement caseInsensitiveCompare: @"outline"] != NSOrderedSame &&
-                   [placement caseInsensitiveCompare: @"outside"] != NSOrderedSame) {
-            [warnings addObject: [NSString stringWithFormat:
-                @"focusRingStyle \"%@\" is not outline or inline", placement]];
-        }
+    if (placement.length && !ARRingPlacementParse(placement, &style.placement)) {
+        [warnings addObject: [NSString stringWithFormat:
+            @"focusRingStyle \"%@\" is not outline, inline, top, bottom, left or right",
+            placement]];
     }
 
     style.width = ARClamped(values, kFocusRingWidth, style.width, 0.5, 10, warnings);
@@ -293,6 +323,8 @@ static ARRingStyle ARRingStyleFromValues(NSDictionary *values, NSMutableArray *w
     // Anything under a fifth of a second reads as a flicker rather than a pulse.
     CGFloat pulse = ARClamped(values, kFocusRingPulse, style.pulseSeconds, 0, 6, warnings);
     style.pulseSeconds = pulse > 0 && pulse < 0.2 ? 0.2 : pulse;
+    style.spread = ARClamped(values, kFocusRingSpread, style.spread, 0.05, 1, warnings);
+    style.falloff = ARClamped(values, kFocusRingFalloff, style.falloff, 0, 1, warnings);
     return style;
 }
 
@@ -516,12 +548,16 @@ NSString *ARConfigTemplate(void) {
             "# The colour is a hex value, or \"accent\" to follow the system.\n"
             "focusRing=true\n"
             "focusRingColor=accent\n"
-            "focusRingStyle=outline    # outline draws around the edge, inline inside it\n"
+            "# outline and inline trace the whole window; top, bottom, left and right\n"
+            "# draw one bar along that edge, brightest in the middle.\n"
+            "focusRingStyle=outline\n"
             "focusRingWidth=2\n"
             "focusRingGlow=7           # 0 for a plain line\n"
             "focusRingRadius=11\n"
             "focusRingOpacity=1.0\n"
             "focusRingPulse=1.1        # seconds per breath, 0 to hold steady\n"
+            "focusRingSpread=0.6       # bars: how much of the edge they cover\n"
+            "focusRingFalloff=0.7      # bars: 0 ends abruptly, 1 fades the whole way\n"
             "# Shortcuts, for example control-option-J. Leave out for none.\n"
             "#toggleShortcut=none\n"
             "#raiseShortcut=none\n";
@@ -550,7 +586,8 @@ NSString *ARConfigUsage(void) {
             "  -liveReload <true|false>\n"
             "  -focusRing <true|false>               outline a focused, unraised window\n"
             "  -focusRingColor <#0A84FF|accent>\n"
-            "  -focusRingStyle <outline|inline>\n"
+            "  -focusRingStyle <outline|inline|top|bottom|left|right>\n"
+            "  -focusRingSpread <0.6> -focusRingFalloff <0.7>   for the bar styles\n"
             "  -focusRingWidth <2> -focusRingGlow <7> -focusRingRadius <11>\n"
             "  -focusRingOpacity <1.0> -focusRingPulse <1.1>\n"
             "  -toggleShortcut <control-option-J>    pause and resume from anywhere\n"
