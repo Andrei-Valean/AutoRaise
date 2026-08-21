@@ -85,6 +85,9 @@ typedef struct {
 @property (nonatomic, copy) NSArray<NSString *> *ignoreApps;
 @property (nonatomic, copy) NSArray<NSString *> *ignoreTitles;
 @property (nonatomic, strong) ARQuirks *quirks;
+// Set this and every rule that had a say appends a line to it, ending with the
+// one that decided. Nil, which it normally is, costs nothing.
+@property (nonatomic, strong, nullable) NSMutableArray<NSString *> *trace;
 @end
 
 // An app entry matches a localized app name (as AutoRaise has always done) or a
@@ -112,6 +115,8 @@ BOOL ARDecideAgainstFocused(ARRaiseQuery *query, ARRaiseDecision candidate);
 
 // Both stages at once.
 ARRaiseDecision ARDecideRaise(ARRaiseQuery *query);
+// One line saying what the decision amounts to, for the inspector.
+NSString *ARDecisionSummary(ARRaiseQuery *query, ARRaiseDecision decision, BOOL focusFirst);
 
 // Mouse position corrections for the transparent window border macOS 12
 // introduced, and for the menu bar and screen edges. Pure geometry so the

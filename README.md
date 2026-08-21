@@ -118,6 +118,28 @@ number. Run `./AutoRaise -help` for the full list.
 Arguments beat the file, which would otherwise make a setting in the window look broken. Changing
 that setting in the window drops the argument, so the window always wins from then on.
 
+### Why did it do that
+
+Every hover is one decision made from a dozen rules that can each veto, so when the answer surprises
+you the useful question is which rule spoke. **Explain What It Is Doing**, in the menu bar, opens a
+small panel that answers it live: the window under the pointer, what AutoRaise decided, and every
+rule that had a say, ending with the one that settled it.
+
+    Slack — general
+    Slack · com.tinyspeck.slackmacgap
+    ┌──────────────────────────────────────────┐
+    │ Give it the keyboard where it is         │
+    └──────────────────────────────────────────┘
+    · It comes to the front by itself when focused
+    · The keyboard is on Dia
+    On hover: focusThenRaise · eagerness: normal
+    Learned: it raises itself when focused
+
+It also explains the times nothing happens, which used to be the hard case: you are still typing,
+the pointer is still travelling, the suspend key is down, a system dialog has the keyboard. The panel
+never takes the keyboard and is never the window under the pointer, so watching does not change what
+is being watched. Before this, the only way to see any of it was `-verbose` and a terminal.
+
 ### One table, not nine lists
 
 How an application should be treated is one question, so it has one answer:

@@ -22,6 +22,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)accessibilityGranted;
 - (void)requestAccessibility;
 - (void)openSettings;
+// The panel that says what AutoRaise is doing and why.
+- (BOOL)inspectorVisible;
+- (void)toggleInspector;
 - (BOOL)loginItemAvailable;
 - (BOOL)loginItemEnabled;
 - (void)setLoginItemEnabled:(BOOL)enabled;

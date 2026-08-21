@@ -91,30 +91,60 @@ BOOL ARWindowContainedWithin(ARWindow *inner, ARWindow *outer) {
     return ARContainedWithin(inner.frame, outer.frame);
 }
 
+// Nothing here changes a decision; each line says which rule spoke and what it
+// said, so the reason a window did or did not raise can be read rather than
+// guessed at. The final line of a trace is always the rule that settled it.
+static void ARNote(ARRaiseQuery *query, NSString *format, ...) NS_FORMAT_FUNCTION(2, 3);
+static void ARNote(ARRaiseQuery *query, NSString *format, ...) {
+    if (!query.trace) { return; }
+    va_list arguments;
+    va_start(arguments, format);
+    NSString *line = [[NSString alloc] initWithFormat: format arguments: arguments];
+    va_end(arguments);
+    [query.trace addObject: line];
+}
+
 ARRaiseDecision ARDecideCandidate(ARRaiseQuery *query) {
     ARRaiseDecision decision = {NO, NO};
     ARWindow *mouse = query.mouseWindow;
     ARQuirks *quirks = query.quirks;
 
     // AutoRaise's own windows, the focus ring above all, are not candidates.
-    if (query.ownPid && mouse.pid == query.ownPid) { return decision; }
+    if (query.ownPid && mouse.pid == query.ownPid) {
+        ARNote(query, @"It is one of AutoRaise's own windows");
+        return decision;
+    }
 
     // One row in the app table beats every general setting.
-    if (query.hoveredPolicy == ARAppPolicyIgnore) { return decision; }
+    if (query.hoveredPolicy == ARAppPolicyIgnore) {
+        ARNote(query, @"Its rule says leave it alone");
+        return decision;
+    }
+    if (query.hoveredPolicy != ARAppPolicyDefault) {
+        ARNote(query, @"Its rule says %@", ARAppPolicyDescribe(query.hoveredPolicy));
+    }
 
     BOOL needsRaise = query.mouseWindowPresent;
+    if (!needsRaise) { ARNote(query, @"No window under the pointer"); }
 
     if (needsRaise && ARTitleMatches(mouse.title, quirks.titlesNeedingMainWindowCheck, nil)) {
         needsRaise = ARIsMainWindow(mouse, quirks);
+        ARNote(query, @"A quirk says to check this title is the main window: %@",
+               needsRaise ? @"it is" : @"it is not");
     } else if (needsRaise && ARTitleMatches(mouse.title, quirks.ignoreTitles, query.ignoreTitles)) {
         needsRaise = NO;
+        ARNote(query, @"Its title matches one to ignore");
     } else if (query.mouseWindowPresent) {
         if (query.hoveredPolicy == ARAppPolicyDefault &&
             (ARMatchesApp(mouse, query.ignoreApps) || ARMatchesApp(mouse, quirks.ignoreApps))) {
             needsRaise = NO;
+            ARNote(query, @"The application is on a list to ignore");
         }
         decision.appRaisesOnFocus = query.hoveredPolicy == ARAppPolicyQuiet ||
                                     ARMatchesApp(mouse, quirks.appsRaisingOnFocus);
+        if (decision.appRaisesOnFocus) {
+            ARNote(query, @"It comes to the front by itself when focused");
+        }
     }
 
     decision.needsRaise = needsRaise;
@@ -129,17 +159,29 @@ BOOL ARDecideAgainstFocused(ARRaiseQuery *query, ARRaiseDecision candidate) {
     if (!focused.known) {
         // The frontmost app has a main window but nothing focused: it is mid
         // transition, leave it alone.
+        ARNote(query, query.frontmostHasMainWindow
+            ? @"The frontmost application is between windows"
+            : @"Nothing has the keyboard, so there is nothing to weigh it against");
         return !query.frontmostHasMainWindow;
     }
 
-    if (mouse.windowId == focused.windowId) { return NO; }
+    if (mouse.windowId == focused.windowId) {
+        ARNote(query, @"It already has the keyboard");
+        return NO;
+    }
 
     // A password prompt or another system dialog keeps the keyboard until it is
     // dealt with. Hovering past it must not take the focus away.
-    if (focused.isSystemDialog) { return NO; }
+    if (focused.isSystemDialog) {
+        ARNote(query, @"A system dialog has the keyboard and keeps it");
+        return NO;
+    }
 
     // Nor may an application whose row says it never loses the keyboard.
-    if (query.focusedPolicy == ARAppPolicyKeepFocus && mouse.pid != focused.pid) { return NO; }
+    if (query.focusedPolicy == ARAppPolicyKeepFocus && mouse.pid != focused.pid) {
+        ARNote(query, @"The rule for the application in front says it never loses the keyboard");
+        return NO;
+    }
 
     // The focused window sitting inside the hovered one is what a dialog
     // belonging to it looks like, and raising the parent over its own dialog
@@ -149,15 +191,31 @@ BOOL ARDecideAgainstFocused(ARRaiseQuery *query, ARRaiseDecision candidate) {
     BOOL sameApp = mouse.pid == focused.pid;
     BOOL wouldCoverOwnDialog = sameApp && ARWindowContainedWithin(focused, mouse);
 
+    if (wouldCoverOwnDialog) {
+        ARNote(query, @"The window with the keyboard is a dialog belonging to this one");
+    }
     if (!query.focusFirst) { return !wouldCoverOwnDialog; }
-    return ARIsMainWindow(focused, query.quirks) &&
-           ((!sameApp && !candidate.appRaisesOnFocus) || !wouldCoverOwnDialog);
+
+    BOOL focusedIsMain = ARIsMainWindow(focused, query.quirks);
+    if (!focusedIsMain) {
+        ARNote(query, @"The window with the keyboard is not a main window, so leave it be");
+    }
+    return focusedIsMain && ((!sameApp && !candidate.appRaisesOnFocus) || !wouldCoverOwnDialog);
 }
 
 ARRaiseDecision ARDecideRaise(ARRaiseQuery *query) {
     ARRaiseDecision decision = ARDecideCandidate(query);
     decision.needsRaise = ARDecideAgainstFocused(query, decision);
     return decision;
+}
+
+NSString *ARDecisionSummary(ARRaiseQuery *query, ARRaiseDecision decision, BOOL focusFirst) {
+    if (!decision.needsRaise) { return @"Nothing to do"; }
+    if (focusFirst) {
+        return decision.appRaisesOnFocus ? @"Focus it, and it will raise itself"
+                                         : @"Give it the keyboard where it is";
+    }
+    return @"Raise it";
 }
 
 ARCorrectedPoint ARCorrectMousePoint(CGPoint raw, CGPoint delta,

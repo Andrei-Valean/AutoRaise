@@ -29,6 +29,7 @@
 #import "AppTable.h"
 #import "Config.h"
 #import "FocusRing.h"
+#import "Inspector.h"
 #import "MenuBar.h"
 #import "Policy.h"
 #import "Quirks.h"
@@ -160,6 +161,7 @@ static void window_manager_focus_window_without_raise(
     CGEventFlags _flags;
     NSTimeInterval _lastKeystroke;      // typing is intent too, of a different kind
     NSTimeInterval _lastHotkey;         // a modified keystroke: maybe a task switcher
+    ARInspector *_inspector;            // nil until somebody asks to watch
     AXUIElementRef _previousWindow;     // where the keyboard was before this
     pid_t _previousWindowPid;
 
@@ -1004,7 +1006,43 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
     }
 }
 
-//------------------------------------------ where it all happens ------------------------------------------
+//-------------------------------------------- the inspector -----------------------------------------------
+
+- (BOOL)inspectorVisible { return _inspector.visible; }
+
+- (void)toggleInspector {
+    if (!_inspector) { _inspector = [[ARInspector alloc] init]; }
+    [_inspector toggle];
+    if (!_inspector.visible) { return; }
+
+    // Say something the moment it opens rather than sitting blank until the
+    // pointer moves, and if the reason nothing happens is permission, say that.
+    if (![self accessibilityGranted]) {
+        [self explain: @"Nothing can happen yet"
+              because: @"AutoRaise has no accessibility permission, so it cannot see windows"];
+    } else {
+        [self explain: @"Nothing yet" because: @"Move the pointer over a window"];
+    }
+}
+
+// A one line state, for the ways out that never reach a decision.
+- (void)explain:(NSString *)summary because:(NSString *)reason {
+    if (!_inspector.visible) { return; }
+    [_inspector updateWithWindow: nil app: nil summary: summary
+                           trace: reason.length ? @[reason] : @[]
+                           facts: [self inspectorFacts]];
+}
+
+// The settings that shaped the decision, so the panel answers "why" without
+// having to be read next to the settings window.
+- (NSArray<NSString *> *)inspectorFacts {
+    NSMutableArray<NSString *> *facts = [NSMutableArray array];
+    [facts addObject: [NSString stringWithFormat: @"On hover: %@ · eagerness: %@",
+                       ARHoverModeDescribe(_config.mode),
+                       AREagernessDescribe(_config.eagerness)]];
+    if (!_enabled) { [facts addObject: @"AutoRaise is paused"]; }
+    return facts;
+}
 
 - (CGPoint)currentMousePoint {
     if (_havePoint) { return _point; }
@@ -1014,17 +1052,24 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
     return point;
 }
 
-- (BOOL)shouldAbortNow {
+// Nil when there is nothing in the way. The words are for the inspector, so a
+// hover that does nothing can say why without a terminal.
+- (NSString *)abortReason {
     // Never fight a drag: resizing or moving a window keeps the button down.
     if (CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState, kCGMouseButtonLeft) ||
         CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState, kCGMouseButtonRight)) {
-        return YES;
+        return @"A mouse button is down, which is a drag rather than a hover";
     }
 
     if (_config.disableKey) {
         CGEventFlags flags = CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState);
         BOOL held = (flags & _config.disableKey) == _config.disableKey;
-        if (held != _config.invertDisableKey) { return YES; }
+        if (held != _config.invertDisableKey) {
+            return held ? [NSString stringWithFormat: @"The %@ key is held down",
+                                                      _config.disableKeyName]
+                        : [NSString stringWithFormat: @"The %@ key is not held down",
+                                                      _config.disableKeyName];
+        }
     }
 
     // An application that must not lose the keyboard stops the whole evaluation,
@@ -1032,15 +1077,20 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
     NSRunningApplication *frontmost = [[NSWorkspace sharedWorkspace] frontmostApplication];
     NSString *frontmostBundleId = frontmost.bundleIdentifier;
     if (frontmostBundleId && [_config.stayFocusedBundleIds containsObject: frontmostBundleId]) {
-        return YES;
+        return @"The application in front is on the list that keeps the keyboard";
     }
     ARWindow *front = [[ARWindow alloc] init];
     front.bundleId = frontmostBundleId;
     front.appName = frontmost.localizedName;
-    if ([[ARAppTable shared] policyFor: front] == ARAppPolicyKeepFocus) { return YES; }
+    if ([[ARAppTable shared] policyFor: front] == ARAppPolicyKeepFocus) {
+        return [NSString stringWithFormat: @"%@ is in front and its rule says it never loses "
+                                            "the keyboard", frontmost.localizedName ?: @"It"];
+    }
 
     // These two cost a round trip to the Dock, so they come last.
-    return ARDockIsActive() || ARMissionControlIsActive();
+    if (ARDockIsActive()) { return @"The Dock has the keyboard"; }
+    if (ARMissionControlIsActive()) { return @"Mission Control is open"; }
+    return nil;
 }
 
 // Returns YES while something is still in flight, which keeps the fast timer
@@ -1112,6 +1162,9 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
             if (_config.verbose && arrived) {
                 NSLog(@"Still typing (%.0fms ago), leaving the keyboard alone", since * 1000);
             }
+            [self explain: @"Waiting" because: [NSString stringWithFormat:
+                @"You typed %.0fms ago, and taking the keyboard mid-sentence loses characters",
+                since * 1000]];
             return YES;
         }
     }
@@ -1119,19 +1172,27 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
     // Still travelling: whatever is under the pointer on the way is not what
     // was being aimed at.
     if (!intent.settled) {
+        [self explain: @"Waiting" because: [NSString stringWithFormat:
+            @"The pointer is still travelling, at %.0f pt/s", intent.speed]];
         _delay = ARResetDelay();
         return YES;
     }
     if (!arrived && !_delay.raiseTimes) { return NO; }
 
-    if ([self shouldAbortNow]) {
-        if (_config.verbose) { NSLog(@"Abort focus/raise"); }
+    NSString *abort = [self abortReason];
+    if (abort) {
+        if (_config.verbose) { NSLog(@"Abort focus/raise: %@", abort); }
+        [self explain: @"On hold" because: abort];
         _delay = ARResetDelay();
         return NO;
     }
 
     AXUIElementRef _mouseWindow = ARCopyWindowAtPoint(mousePoint, _config.windowServerHitTest);
-    if (!_mouseWindow) { return mouseMoved; }
+    if (!_mouseWindow) {
+        [self explain: @"Nothing to do" because: @"No window under the pointer: the desktop, "
+                                                 "the Dock or the menu bar"];
+        return mouseMoved;
+    }
 
     BOOL busy = [self considerRaising: _mouseWindow];
     CFRelease(_mouseWindow);
@@ -1171,6 +1232,8 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
     query.ignoreTitles = _config.ignoreTitles;
     query.quirks = _quirks;
 
+    if (_inspector.visible) { query.trace = [NSMutableArray array]; }
+
     query.focusedWindow = [[ARWindow alloc] init];
     ARRaiseDecision decision = ARDecideCandidate(query);
 
@@ -1208,9 +1271,40 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         _delay = ARResetDelay();
     }
 
+    if (query.trace) { [self publish: query decision: decision acted: busy]; }
     if (_focusedWindow) { CFRelease(_focusedWindow); }
     return busy;
 }
+
+- (void)publish:(ARRaiseQuery *)query decision:(ARRaiseDecision)decision acted:(BOOL)acted {
+    ARWindow *mouse = query.mouseWindow;
+    NSMutableArray<NSString *> *facts = [[self inspectorFacts] mutableCopy];
+    if (query.hoveredPolicy != ARAppPolicyDefault) {
+        [facts addObject: [NSString stringWithFormat: @"Its rule in apps.json: %@",
+                           ARAppPolicyDescribe(query.hoveredPolicy)]];
+    }
+    ARAppTraits traits = [[ARAppTable shared] traitsFor: mouse];
+    if (traits.raisesItself) { [facts addObject: @"Learned: it raises itself when focused"]; }
+    if (traits.needsLegacyActivation) {
+        [facts addObject: @"Learned: it needs the old way of activating"];
+    }
+    if (query.focusedWindow.known && query.focusedWindow.windowId != mouse.windowId) {
+        [facts addObject: [NSString stringWithFormat: @"The keyboard is on %@",
+                           query.focusedWindow.appName ?: @"another window"]];
+    }
+
+    NSString *app = mouse.appName ?: @"";
+    if (mouse.bundleId.length) {
+        app = [NSString stringWithFormat: @"%@ · %@", app, mouse.bundleId];
+    }
+    [_inspector updateWithWindow: mouse.title.length ? mouse.title : @"An untitled window"
+                            app: app
+                        summary: ARDecisionSummary(query, decision, _config.focusFirst)
+                          trace: query.trace
+                          facts: facts];
+}
+
+//------------------------------------------ where it all happens ------------------------------------------
 
 - (ARSavedAction)act:(AXUIElementRef)_mouseWindow facts:(ARWindow *)mouse
     focusedFacts:(ARWindow *)focused frontmost:(pid_t)frontmostPid

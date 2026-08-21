@@ -103,6 +103,12 @@
     settings.target = self;
     [menu addItem: settings];
 
+    NSMenuItem *inspector = [[NSMenuItem alloc] initWithTitle:
+        delegate.inspectorVisible ? @"Stop Explaining" : @"Explain What It Is Doing"
+        action: @selector(toggleInspector:) keyEquivalent: @""];
+    inspector.target = self;
+    [menu addItem: inspector];
+
     [menu addItem: [NSMenuItem separatorItem]];
 
     NSMenuItem *quit = [[NSMenuItem alloc] initWithTitle: @"Quit AutoRaise"
@@ -129,6 +135,10 @@
 
 - (void)openSettings:(id)sender {
     [self.delegate openSettings];
+}
+
+- (void)toggleInspector:(id)sender {
+    [self.delegate toggleInspector];
 }
 
 - (void)openAccessibilitySettings:(id)sender {

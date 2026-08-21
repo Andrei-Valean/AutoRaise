@@ -823,6 +823,73 @@ static void testConfigWriting(void) {
     [[NSFileManager defaultManager] removeItemAtPath: path error: nil];
 }
 
+//------------------------------------------------ trace ---------------------------------------------------
+
+static BOOL mentions(NSArray<NSString *> *trace, NSString *fragment) {
+    for (NSString *line in trace) {
+        if ([line rangeOfString: fragment options: NSCaseInsensitiveSearch].location != NSNotFound) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static void testTrace(void) {
+    CASE("asking for a trace does not change the answer");
+    ARRaiseQuery *plain = makeQuery();
+    ARRaiseQuery *traced = makeQuery();
+    traced.trace = [NSMutableArray array];
+    CHECK_EQ_INT(ARDecideRaise(plain).needsRaise, ARDecideRaise(traced).needsRaise);
+
+    CASE("and the rule that decided is the last thing it says");
+    ARRaiseQuery *ignored = makeQuery();
+    ignored.trace = [NSMutableArray array];
+    ignored.hoveredPolicy = ARAppPolicyIgnore;
+    CHECK(!ARDecideRaise(ignored).needsRaise);
+    CHECK_EQ_INT(ignored.trace.count, 1);
+    CHECK(mentions(ignored.trace, @"leave it alone"));
+
+    CASE("a window that already has the keyboard says so");
+    ARRaiseQuery *same = makeQuery();
+    same.trace = [NSMutableArray array];
+    same.focusedWindow = same.mouseWindow;
+    CHECK(!ARDecideRaise(same).needsRaise);
+    CHECK(mentions(same.trace, @"already has the keyboard"));
+
+    CASE("as does an application that never loses it");
+    ARRaiseQuery *keeper = makeQuery();
+    keeper.trace = [NSMutableArray array];
+    keeper.focusedPolicy = ARAppPolicyKeepFocus;
+    CHECK(!ARDecideRaise(keeper).needsRaise);
+    CHECK(mentions(keeper.trace, @"never loses the keyboard"));
+
+    CASE("a system dialog holding the keyboard is named as the reason");
+    ARRaiseQuery *dialog = makeQuery();
+    dialog.trace = [NSMutableArray array];
+    dialog.focusedWindow.isSystemDialog = YES;
+    CHECK(!ARDecideRaise(dialog).needsRaise);
+    CHECK(mentions(dialog.trace, @"system dialog"));
+
+    CASE("and nothing is written when nobody is watching");
+    ARRaiseQuery *quiet = makeQuery();
+    quiet.hoveredPolicy = ARAppPolicyIgnore;
+    ARDecideRaise(quiet);            // a nil trace must not be touched
+    CHECK(quiet.trace == nil);
+
+    CASE("the summary says what will happen in words");
+    ARRaiseQuery *raising = makeQuery();
+    ARRaiseDecision decision = ARDecideRaise(raising);
+    CHECK(decision.needsRaise);
+    CHECK_EQ_STR(ARDecisionSummary(raising, decision, NO), @"Raise it");
+    CHECK_EQ_STR(ARDecisionSummary(raising, decision, YES),
+                 @"Give it the keyboard where it is");
+    decision.appRaisesOnFocus = YES;
+    CHECK_EQ_STR(ARDecisionSummary(raising, decision, YES),
+                 @"Focus it, and it will raise itself");
+    decision.needsRaise = NO;
+    CHECK_EQ_STR(ARDecisionSummary(raising, decision, YES), @"Nothing to do");
+}
+
 //---------------------------------------------- app table -------------------------------------------------
 
 static ARAppRule *makeRule(NSString *match, ARAppPolicy policy) {
@@ -1175,6 +1242,7 @@ int main(void) {
         testStats();
         testIntent();
         testAppTable();
+        testTrace();
 
         printf("%d checks, %d failures\n", checks, failures);
         return failures ? 1 : 0;

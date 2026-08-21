@@ -10,12 +10,12 @@ ifeq ($(SKYLIGHT_AVAILABLE), 1)
     FRAMEWORKS += -F /System/Library/PrivateFrameworks -framework SkyLight
 endif
 
-SOURCES := src/main.mm src/AppTable.mm src/Config.mm src/FocusRing.mm src/MenuBar.mm \
+SOURCES := src/main.mm src/AppTable.mm src/Config.mm src/FocusRing.mm src/Inspector.mm src/MenuBar.mm \
            src/Policy.mm \
            src/Quirks.mm src/Shortcut.mm src/SettingsUI.mm src/SettingsWindow.mm \
            src/Stats.mm \
            src/WindowFinder.mm
-HEADERS := src/AppTable.h src/Config.h src/FocusRing.h src/MenuBar.h src/Policy.h \
+HEADERS := src/AppTable.h src/Config.h src/FocusRing.h src/Inspector.h src/MenuBar.h src/Policy.h \
            src/Quirks.h src/Stats.h \
            src/SettingsUI.h src/SettingsWindow.h src/WindowFinder.h
 OBJECTS := $(patsubst src/%.mm,build/%.o,$(SOURCES))
@@ -76,10 +76,13 @@ AutoRaise.icns: tools/make-icon.mm
 	iconutil -c icns build/AutoRaise.iconset -o AutoRaise.icns
 	@echo "Wrote AutoRaise.icns"
 
+# Updated in place rather than deleted and copied: deleting the bundle takes the
+# accessibility permission with it, and then hovering silently does nothing
+# until somebody notices and grants it again.
 install: AutoRaise.app
-	rm -rf /Applications/AutoRaise.app
-	cp -r AutoRaise.app /Applications/
-	@echo "Installed. Open /Applications/AutoRaise.app and allow accessibility."
+	@pkill -x AutoRaise || true
+	rsync -a --delete AutoRaise.app/ /Applications/AutoRaise.app/
+	@echo "Installed. Open /Applications/AutoRaise.app; allow accessibility if it asks."
 
 uninstall:
 	-pkill -x AutoRaise
