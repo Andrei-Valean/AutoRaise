@@ -80,6 +80,12 @@ AutoRaise.icns: tools/make-icon.mm
 # accessibility permission with it, and then hovering silently does nothing
 # until somebody notices and grants it again.
 install: AutoRaise.app
+	@codesign -dvv AutoRaise.app 2>&1 | grep -q "Signature=adhoc" && { \
+	    echo "Refusing to install: AutoRaise.app is signed ad hoc, so macOS will"; \
+	    echo "treat it as a different app and drop the accessibility permission."; \
+	    echo "Run 'make identity' to see what is available, then 'rm -rf"; \
+	    echo "AutoRaise.app && make' to build it signed."; \
+	    exit 1; } || true
 	@pkill -x AutoRaise || true
 	rsync -a --delete AutoRaise.app/ /Applications/AutoRaise.app/
 	@echo "Installed. Open /Applications/AutoRaise.app; allow accessibility if it asks."

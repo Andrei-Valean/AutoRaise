@@ -1,7 +1,21 @@
 #!/bin/bash
 set -euo pipefail
 
-IDENTITY="${CODESIGN_IDENTITY:--}"
+# make exports CODESIGN_IDENTITY, but this script is also run by hand, and an
+# ad hoc signature is the one outcome that quietly breaks accessibility: it
+# gives the app a new identity on every build, so the permission you granted
+# stops applying to it. Look the certificate up rather than assume ad hoc.
+best_identity() {
+    local pattern
+    for pattern in "Developer ID Application" "Apple Development"; do
+        security find-identity -v -p codesigning 2>/dev/null |
+            grep -o "\"$pattern: [^\"]*\"" | head -1 | tr -d '"' && return 0
+    done
+}
+
+IDENTITY="${CODESIGN_IDENTITY:-}"
+[ -n "$IDENTITY" ] || IDENTITY="$(best_identity)"
+[ -n "$IDENTITY" ] || IDENTITY="-"
 BUNDLE=AutoRaise.app
 
 rm -rf "$BUNDLE"
@@ -28,6 +42,12 @@ if codesign "${SIGN_ARGS[@]}" "$BUNDLE"; then
     codesign --verify --strict "$BUNDLE" && echo "Signature verified"
 else
     echo "Warning: $BUNDLE is unsigned; accessibility permission will not stick"
+fi
+
+if [ "$IDENTITY" = "-" ]; then
+    echo "Warning: signed ad hoc. macOS will treat the next build as a different"
+    echo "         app, and the accessibility permission will have to be granted"
+    echo "         again. Install a development certificate to avoid that."
 fi
 
 echo "Successfully created $BUNDLE"
