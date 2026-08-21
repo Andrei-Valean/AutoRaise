@@ -10,17 +10,20 @@
 #define STACK_THRESHOLD 20
 #define DOCK_CACHE_SECONDS 0.15
 
-typedef int CGSConnectionID;
-extern "C" CGSConnectionID CGSMainConnectionID(void);
-
-#if SKYLIGHT_AVAILABLE
 // Undocumented, and the reason the window server hit test is switchable: one
 // call tells us which window is on top at a point without waiting for the
 // application that owns it.
+//
+// Weakly imported, every one of them. These are private symbols, so a future
+// macOS may rename or drop one, and a hard reference would stop AutoRaise from
+// launching at all. Weak, a missing symbol is a null pointer, and the check
+// before each call falls back to asking the application instead.
+typedef int CGSConnectionID;
+extern "C" CGSConnectionID CGSMainConnectionID(void) __attribute__((weak_import));
 extern "C" CGError SLSFindWindowByGeometry(int cid, int filter, int one, int zero,
                                            CGPoint *screenPoint, CGPoint *windowPoint,
-                                           uint32_t *windowId, int *windowConnection);
-#endif
+                                           uint32_t *windowId, int *windowConnection)
+    __attribute__((weak_import));
 
 static AXUIElementRef _systemWide = NULL;
 static AXUIElementRef _dockApp = NULL;
@@ -59,12 +62,23 @@ void ARWindowFinderInit(BOOL verbose) {
     ARRefreshDesktopOrigin();
 }
 
+BOOL ARPrivateCallsRefused(void) {
+    static BOOL refused = NO;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        refused = getenv("AUTORAISE_NO_PRIVATE") != NULL;
+        if (refused) { NSLog(@"AUTORAISE_NO_PRIVATE: pretending the private calls are gone"); }
+    });
+    return refused;
+}
+
+BOOL ARWindowIdsAvailable(void) {
+    return !ARPrivateCallsRefused() && _AXUIElementGetWindow != NULL;
+}
+
 BOOL ARWindowServerHitTestAvailable(void) {
-#if SKYLIGHT_AVAILABLE
-    return YES;
-#else
-    return NO;
-#endif
+    return !ARPrivateCallsRefused() &&
+           SLSFindWindowByGeometry != NULL && CGSMainConnectionID != NULL;
 }
 
 //------------------------------------------------ logging -------------------------------------------------
@@ -174,7 +188,7 @@ BOOL ARIsDesktopWindow(AXUIElementRef window) {
 
 CGWindowID ARWindowID(AXUIElementRef window) {
     CGWindowID windowId = kCGNullWindowID;
-    if (_AXUIElementGetWindow(window, &windowId) != kAXErrorSuccess) {
+    if (!ARWindowIdsAvailable() || _AXUIElementGetWindow(window, &windowId) != kAXErrorSuccess) {
         // Never let a failed lookup leave a stale id behind: kCGNullWindowID
         // means "unknown", which callers handle.
         return kCGNullWindowID;
@@ -288,7 +302,8 @@ static AXUIElementRef _Nullable ARCopyAXWindowForID(pid_t pid, CGWindowID window
     for (id candidate in windows) {
         AXUIElementRef _candidate = (__bridge AXUIElementRef) candidate;
         CGWindowID candidateId = kCGNullWindowID;
-        if (_AXUIElementGetWindow(_candidate, &candidateId) == kAXErrorSuccess &&
+        if (ARWindowIdsAvailable() &&
+            _AXUIElementGetWindow(_candidate, &candidateId) == kAXErrorSuccess &&
             candidateId == windowId) {
             _match = (AXUIElementRef) CFRetain(_candidate);
             break;
@@ -303,7 +318,8 @@ static BOOL ARListWindowAtPoint(CGPoint point, CGWindowID *windowId, pid_t *pid)
 // owner. Returns NO when the point is over the menu bar, the Dock, a screen
 // saver or anything else that is not a normal window.
 static BOOL ARWindowServerWindowAtPoint(CGPoint point, CGWindowID *windowId, pid_t *pid) {
-#if SKYLIGHT_AVAILABLE
+    if (!ARWindowServerHitTestAvailable()) { return NO; }
+
     CGPoint windowPoint = CGPointZero;
     uint32_t found = 0;
     int connection = 0;
@@ -333,10 +349,6 @@ static BOOL ARWindowServerWindowAtPoint(CGPoint point, CGWindowID *windowId, pid
         return ARListWindowAtPoint(point, windowId, pid);
     }
     return *pid != 0;
-#else
-    (void) point; (void) windowId; (void) pid;
-    return NO;
-#endif
 }
 
 // The pre-window-server route: scan the on screen window list top to bottom.

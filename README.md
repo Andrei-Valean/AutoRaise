@@ -238,8 +238,9 @@ window as it is moved or resized, and re-checks what is covering it four times a
 on screen. Colour, brightness, corner rounding and how fast it breathes are all settings, and the
 colour takes a hex value or `accent` to follow the system.
 
-It works through undocumented SkyLight calls, so treat it as experimental: **there is no guarantee
-it keeps working in future macOS versions**. It used to require a separate build with
+It works through undocumented SkyLight calls, so treat it as experimental. If a future macOS drops
+them, AutoRaise says so at startup and raises windows instead, rather than failing to launch; see
+[Which macOS versions](#which-macos-versions). It used to require a separate build with
 `EXPERIMENTAL_FOCUS_FIRST`; now it is just a setting.
 
 ### One gesture, one result
@@ -291,6 +292,46 @@ If you work out a quirk for an app, a three line diff to the defaults is a welco
 
 Quirks are shipped knowledge about applications in general; `apps.json` is what you and this machine
 have decided. When AutoRaise notices something itself it writes it there, not into the quirks.
+
+## Which macOS versions
+
+**macOS 15 and later, on Apple silicon and Intel.** One universal binary, `minos 15.0`, built
+against whatever SDK the build machine has. Both numbers are pinned rather than inherited from the
+machine that compiled it, because a deployment target taken from the build host is how a binary ends
+up refusing to launch on the very Mac it was meant for:
+
+    make                      # arm64 + x86_64, macOS 15.0 and later
+    make MACOS_MIN=13.0       # go further back, if you have tested it there
+    make ARCHS="-arch arm64"  # one architecture, for a local build
+
+`create-app-bundle.sh` writes `LSMinimumSystemVersion` from the binary's own `minos`, so the number
+the Finder shows can never drift from the number dyld enforces.
+
+Newer versions are the harder direction, because AutoRaise needs five private calls that Apple can
+rename or remove in any release: `SLSFindWindowByGeometry` for the window under the pointer,
+`SLPSPostEventRecordTo` and `_SLPSSetFrontProcessWithOptions` for focusing without raising,
+`CGSSetCursorScale` for the pointer flash after a warp, and `_AXUIElementGetWindow` for window
+identity. All five are weakly imported and checked before use, so a macOS that drops one leaves a
+null pointer instead of a launch that dies in dyld:
+
+| Missing | What happens |
+| --- | --- |
+| `SLSFindWindowByGeometry` | the hovered application is asked which window it is, as it was before |
+| the two `SLPS` calls | focus-first says so at startup and raises instead |
+| `CGSSetCursorScale` | the pointer still warps, it just does not flash |
+| `_AXUIElementGetWindow` | hovering works, the focus outline does not |
+
+To see any of that without waiting for the macOS that causes it:
+
+    AUTORAISE_NO_PRIVATE=1 ./AutoRaise -mode focus
+
+    ! focusing without raising needs private calls this version of macOS no longer has: raising instead
+    ! this version of macOS no longer tells AutoRaise which window is which; hovering still works,
+      the focus outline does not
+
+Anything newer than the deployment target is a compile error rather than a crash on an older Mac:
+`-Werror=unguarded-availability` means an API from a later macOS cannot be called without a runtime
+check for it.
 
 ## Two binaries
 

@@ -20,7 +20,19 @@ NS_ASSUME_NONNULL_BEGIN
 // this are abandoned and retried on the next evaluation.
 #define AR_AX_TIMEOUT 0.2f
 
-extern "C" AXError _AXUIElementGetWindow(AXUIElementRef, CGWindowID *out);
+// Private, so weakly imported: a macOS that drops it leaves the pointer null
+// rather than stopping AutoRaise from launching. Without it a window has no id,
+// which the callers already handle, having always had to cope with a window
+// whose id could not be read.
+extern "C" AXError _AXUIElementGetWindow(AXUIElementRef, CGWindowID *out)
+    __attribute__((weak_import));
+// Whether that symbol is here at all.
+BOOL ARWindowIdsAvailable(void);
+
+// Set AUTORAISE_NO_PRIVATE in the environment to make AutoRaise behave as though
+// this macOS had dropped every private call it uses. It is how the fallbacks get
+// tested without waiting for the macOS that needs them.
+BOOL ARPrivateCallsRefused(void);
 
 void ARWindowFinderInit(BOOL verbose);
 void ARWindowFinderRefreshDock(void);

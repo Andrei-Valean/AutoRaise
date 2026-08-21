@@ -1,14 +1,26 @@
-SKYLIGHT_AVAILABLE := $(shell test -d /System/Library/PrivateFrameworks/SkyLight.framework && echo 1 || echo 0)
+# The oldest macOS this runs on. Pinned rather than inherited from the build
+# machine: without it the deployment target is whatever the host happens to be,
+# so building on a newer Mac quietly produces a binary that refuses to launch on
+# an older one. Everything newer than this is covered by weak linking and
+# -Werror=unguarded-availability rather than by a second build.
+MACOS_MIN ?= 15.0
+
+# Both architectures, because macOS 26 still runs on Intel and a disk image
+# built for one machine is no use on the other.
+ARCHS ?= -arch arm64 -arch x86_64
 
 CXX ?= g++
-override CXXFLAGS += -O2 -Wall -fobjc-arc -D"NS_FORMAT_ARGUMENT(A)=" \
-                     -D"SKYLIGHT_AVAILABLE=$(SKYLIGHT_AVAILABLE)" -Isrc
+override CXXFLAGS += -O2 -Wall -fobjc-arc -D"NS_FORMAT_ARGUMENT(A)=" -Isrc \
+                     -mmacosx-version-min=$(MACOS_MIN) $(ARCHS) \
+                     -Werror=unguarded-availability -Werror=unguarded-availability-new
 
+# SkyLight is private, so it is linked weakly and every symbol from it is
+# checked before it is called. A macOS that renames or drops one of them makes
+# AutoRaise fall back to the public accessibility route, rather than failing to
+# launch at all.
 FRAMEWORKS := -framework AppKit -framework ServiceManagement -framework QuartzCore \
-              -framework UniformTypeIdentifiers
-ifeq ($(SKYLIGHT_AVAILABLE), 1)
-    FRAMEWORKS += -F /System/Library/PrivateFrameworks -framework SkyLight
-endif
+              -framework UniformTypeIdentifiers \
+              -F /System/Library/PrivateFrameworks -weak_framework SkyLight
 
 SOURCES := src/main.mm src/AppTable.mm src/Config.mm src/FocusRing.mm src/Inspector.mm src/MenuBar.mm \
            src/Policy.mm \

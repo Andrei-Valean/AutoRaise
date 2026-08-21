@@ -22,6 +22,17 @@ rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 cp AutoRaise "$BUNDLE/Contents/MacOS/"
 cp Info.plist "$BUNDLE/Contents/"
+
+# What the Finder tells people about which macOS they need, taken from what the
+# binary will actually accept rather than from a number kept in step by hand. A
+# plist claiming more than the binary allows means a launch that dies in dyld
+# with nothing to read.
+MINOS="$(vtool -show-build AutoRaise 2>/dev/null | awk '/minos/ {print $2; exit}')"
+if [ -n "$MINOS" ]; then
+    /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $MINOS" \
+        "$BUNDLE/Contents/Info.plist" >/dev/null
+    echo "Requires macOS $MINOS or later"
+fi
 cp AutoRaise.icns "$BUNDLE/Contents/Resources/"
 [ -f quirks.json ] && cp quirks.json "$BUNDLE/Contents/Resources/"
 chmod 755 "$BUNDLE"

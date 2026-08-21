@@ -58,20 +58,38 @@
 // heartbeat takes over again.
 #define IDLE_TICKS_BEFORE_SLEEP 4
 
+// Every private symbol is weakly imported, so a macOS that renames or drops one
+// leaves a null pointer instead of stopping AutoRaise from launching. Each is
+// checked before use, and the fallback is the public accessibility route.
 typedef int CGSConnectionID;
-extern "C" CGSConnectionID CGSMainConnectionID(void);
-extern "C" CGError CGSSetCursorScale(CGSConnectionID connectionId, float scale);
-extern "C" CGError CGSGetCursorScale(CGSConnectionID connectionId, float *scale);
+extern "C" CGSConnectionID CGSMainConnectionID(void) __attribute__((weak_import));
+extern "C" CGError CGSSetCursorScale(CGSConnectionID connectionId, float scale)
+    __attribute__((weak_import));
+extern "C" CGError CGSGetCursorScale(CGSConnectionID connectionId, float *scale)
+    __attribute__((weak_import));
 
-#if SKYLIGHT_AVAILABLE
 #define kCPSUserGenerated 0x200
-extern "C" CGError SLPSPostEventRecordTo(ProcessSerialNumber *psn, uint8_t *bytes);
-extern "C" CGError _SLPSSetFrontProcessWithOptions(ProcessSerialNumber *psn, uint32_t wid, uint32_t mode);
-#endif
+extern "C" CGError SLPSPostEventRecordTo(ProcessSerialNumber *psn, uint8_t *bytes)
+    __attribute__((weak_import));
+extern "C" CGError _SLPSSetFrontProcessWithOptions(ProcessSerialNumber *psn, uint32_t wid,
+                                                   uint32_t mode) __attribute__((weak_import));
+
+// Focusing a window without raising it is the one thing AutoRaise cannot do
+// through public API, so this is the question the focus-first mode depends on.
+static BOOL ARFocusWithoutRaisingAvailable(void) {
+    return !ARPrivateCallsRefused() &&
+           SLPSPostEventRecordTo != NULL && _SLPSSetFrontProcessWithOptions != NULL;
+}
+
+// Enlarging the pointer after a warp is a nicety; without it the warp still
+// happens, the pointer just does not flash.
+static BOOL ARCursorScalingAvailable(void) {
+    return !ARPrivateCallsRefused() && CGSMainConnectionID != NULL &&
+           CGSSetCursorScale != NULL && CGSGetCursorScale != NULL;
+}
 
 //----------------------------------------yabai focus only methods------------------------------------------
 
-#if SKYLIGHT_AVAILABLE
 // The two methods below, starting with "window_manager" were copied from
 // https://github.com/koekeishiya/yabai and slightly modified. See also:
 // https://github.com/Hammerspoon/hammerspoon/issues/370#issuecomment-545545468
@@ -130,7 +148,6 @@ static void window_manager_focus_window_without_raise(
     // of letting it choose the window.
     if (makeKeyWindow) { window_manager_make_key_window(_window_psn, window_id); }
 }
-#endif
 
 //------------------------------------------------controller------------------------------------------------
 
@@ -235,7 +252,9 @@ static ARController *controller = nil;
         _focusRing = [[ARFocusRing alloc] init];
         _focusRing.color = _config.focusRingColor;
         _focusRing.style = _config.focusRingStyle;
-        CGSGetCursorScale(CGSMainConnectionID(), &_systemCursorScale);
+        if (ARCursorScalingAvailable()) {
+            CGSGetCursorScale(CGSMainConnectionID(), &_systemCursorScale);
+        }
         if (_config.verbose) { NSLog(@"System cursor scale: %f", _systemCursorScale); }
 
         [self registerNotifications];
@@ -261,7 +280,9 @@ static ARController *controller = nil;
 - (void)restoreCursorScale {
     if (_cursorScaleChanged) {
         _cursorScaleChanged = NO;
-        CGSSetCursorScale(CGSMainConnectionID(), _systemCursorScale);
+        if (ARCursorScalingAvailable()) {
+            CGSSetCursorScale(CGSMainConnectionID(), _systemCursorScale);
+        }
     }
 }
 
@@ -800,6 +821,7 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
 }
 
 - (void)setCursorScale:(NSNumber *)scale {
+    if (!ARCursorScalingAvailable()) { return; }
     if (_config.verbose) { NSLog(@"Set cursor scale: %@", scale); }
     _cursorScaleChanged = scale.floatValue != _systemCursorScale;
     CGSSetCursorScale(CGSMainConnectionID(), scale.floatValue);
@@ -1313,8 +1335,9 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
     BOOL focusFirst = _config.focusFirst;
     if (policy == ARAppPolicyRaise) { focusFirst = NO; }
     if (policy == ARAppPolicyFocus || policy == ARAppPolicyQuiet) { focusFirst = YES; }
-#if SKYLIGHT_AVAILABLE
-    if (focusFirst) {
+    // Whether this macOS still has the calls that focus a window where it
+    // stands. Without them the only honest thing left is to raise it.
+    if (focusFirst && ARFocusWithoutRaisingAvailable()) {
         ProcessSerialNumber mouseWindowPsn;
         ProcessSerialNumber focusedWindowPsn;
         ProcessSerialNumber *_focusedWindowPsn = NULL;
@@ -1376,7 +1399,6 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         }
         return ARSavedActionFocused;
     }
-#endif
     [self noteFocusMovedTo: _mouseWindow pid: mouse.pid];
     if (_lastFocusedWindow) { CFRelease(_lastFocusedWindow); }
     _lastFocusedWindow = (AXUIElementRef) CFRetain(_mouseWindow);
@@ -1636,13 +1658,17 @@ int main(int argc, const char *argv[]) {
         ARConfig *config = ARConfigLoad(argc, argv);
         printf("\nAutoRaise %s by sbmpost(c) 2026, -help for usage\n\n", AUTORAISE_VERSION);
         printf("%s\n", ARConfigSummary(config).UTF8String);
-#if !SKYLIGHT_AVAILABLE
-        if (config.focusFirst) {
-            printf("! focusing without raising needs the SkyLight framework, which is "
-                   "missing: raising instead\n\n");
+        // Said once, at startup, rather than discovered by hovering: this
+        // version of macOS no longer has what focus-first is built on.
+        if (config.focusFirst && !ARFocusWithoutRaisingAvailable()) {
+            printf("! focusing without raising needs private calls this version of macOS no "
+                   "longer has: raising instead\n\n");
             config.mode = ARHoverModeRaise;
         }
-#endif
+        if (!ARWindowIdsAvailable()) {
+            printf("! this version of macOS no longer tells AutoRaise which window is which; "
+                   "hovering still works, the focus outline does not\n\n");
+        }
 
         // Ask for permission on the first run; the app keeps waiting until it is
         // granted rather than needing a restart.
