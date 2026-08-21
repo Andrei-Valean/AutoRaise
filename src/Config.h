@@ -95,12 +95,14 @@ NSString *ARRingPlacementDescribe(ARRingPlacement placement);
 @property (nonatomic) float cursorScale;
 @property (nonatomic, readonly) BOOL warpMouse;
 
-@property (nonatomic) BOOL altTaskSwitcher;
 @property (nonatomic) BOOL ignoreSpaceChanged;
 // While you are typing you are not asking to change windows. Milliseconds after
 // the last keystroke during which hovering leaves the keyboard alone.
 @property (nonatomic) int typingGraceMillis;
+// A ! in front of disableKey: hold the key to allow raising, not to suspend it.
 @property (nonatomic) BOOL invertDisableKey;
+// Read from older settings files so the per-app table can adopt it. Nothing
+// else looks at it; a rule for * says the same thing.
 @property (nonatomic) BOOL invertIgnoreApps;
 
 // Used to be OLD_ACTIVATION_METHOD, ALTERNATIVE_TASK_SWITCHER and

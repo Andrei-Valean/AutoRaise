@@ -58,6 +58,18 @@ static NSArray<NSString *> *ARRetiredKeys(void) {
              kRequireMouseStop];
 }
 
+// Settings this version does without. Each is read one last time, so nothing
+// changes behaviour silently, and each says what replaced it.
+static NSDictionary<NSString *, NSString *> *ARDeletedKeys(void) {
+    return @{
+        kAltTaskSwitcher: @"AutoRaise now notices a task switcher by itself: a hotkey, then an "
+                           "application coming forward",
+        kInvertIgnoreApps: @"it became a rule for * in apps.json, which says what to do with "
+                            "every application you have not named",
+        kInvertDisableKey: @"still read for now, but write it as disableKey=!control instead",
+    };
+}
+
 static NSArray<NSString *> *ARConfigKeys(void) {
     return @[kMode, kEagerness, kRaiseAfter,
              kPollMillis, kHeartbeatMillis, kDelay, kFocusDelay, kWarpX, kWarpY, kScale,
@@ -462,17 +474,21 @@ ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
     if (config.raiseAfterMillis < 0) { config.raiseAfterMillis = 0; }
 
     [config adoptRetiredSettings: values warnings: allWarnings];
+    for (NSString *key in ARDeletedKeys()) {
+        if (!values[key]) { continue; }
+        [allWarnings addObject: [NSString stringWithFormat: @"%@ no longer exists: %@",
+                                 key, ARDeletedKeys()[key]]];
+    }
 
     config.warpX = values[kWarpX] ? [values[kWarpX] floatValue] : -1;
     config.warpY = values[kWarpY] ? [values[kWarpY] floatValue] : -1;
     config.cursorScale = values[kScale] ? [values[kScale] floatValue] : 2.0;
     if (config.cursorScale < 1) { config.cursorScale = 2.0; }
 
-    config.altTaskSwitcher = ARBool(values, kAltTaskSwitcher, NO);
     config.ignoreSpaceChanged = ARBool(values, kIgnoreSpaceChanged, NO);
     config.typingGraceMillis = values[kTypingGrace] ? [values[kTypingGrace] intValue] : 700;
     if (config.typingGraceMillis < 0) { config.typingGraceMillis = 0; }
-    config.invertDisableKey = ARBool(values, kInvertDisableKey, NO);
+    // Read once so the table can adopt it, then never consulted again.
     config.invertIgnoreApps = ARBool(values, kInvertIgnoreApps, NO);
     config.legacyActivation = ARBool(values, kLegacyActivation, NO);
     config.windowServerHitTest = ARBool(values, kWindowServerHitTest, YES);
@@ -519,6 +535,11 @@ ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
 
 
     NSString *disableKey = values[kDisableKey] ?: @"control";
+    // "!control" means the opposite: hold the key to allow raising rather than
+    // to suspend it. One setting says both things.
+    config.invertDisableKey = [disableKey hasPrefix: @"!"] ||
+                              ARBool(values, kInvertDisableKey, NO);
+    if ([disableKey hasPrefix: @"!"]) { disableKey = [disableKey substringFromIndex: 1]; }
     if ([disableKey isEqualToString: @"control"]) {
         config.disableKey = kCGEventFlagMaskControl;
     } else if ([disableKey isEqualToString: @"option"]) {
@@ -530,7 +551,8 @@ ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
     } else {
         if (![disableKey isEqualToString: @"disabled"]) {
             [allWarnings addObject: [NSString stringWithFormat:
-                @"disableKey \"%@\" is not control, option, command, shift or disabled", disableKey]];
+                @"disableKey \"%@\" is not control, option, command, shift or disabled, "
+             "each of which may be written with a ! in front", disableKey]];
         }
         config.disableKey = 0;
         disableKey = @"disabled";
@@ -631,7 +653,6 @@ NSString *ARConfigTemplate(void) {
             "#warpX=0.5\n"
             "#warpY=0.1\n"
             "#scale=2.5\n"
-            "#altTaskSwitcher=false\n"
             "\n"
             "\n"
             "# Browsers and some editors bring themselves to the front the moment they\n"
@@ -643,15 +664,15 @@ NSString *ARConfigTemplate(void) {
             "ignoreSpaceChanged=false\n"
             "\n"
             "# Hold this key to suspend AutoRaise: control, option, command, shift, disabled.\n"
-            "disableKey=control\n"
-            "invertDisableKey=false\n"
+            "disableKey=control       # a ! in front holds to allow instead: !control\n"
             "\n"
-            "# Apps and window titles to leave alone. App entries match a localized\n"
-            "# name or a bundle identifier; titles are ICU regular expressions.\n"
-            "# Escape a literal comma as \\,\n"
+            "# Per-application behaviour now lives in apps.json next to this file,\n"
+            "# one line per application, which the Exceptions page writes for you.\n"
+            "# These three are the older form of the same thing and still work.\n"
+            "# App entries match a localized name or a bundle identifier; titles are\n"
+            "# ICU regular expressions. Escape a literal comma as \\,\n"
             "#ignoreApps=\"IntelliJ IDEA,com.jetbrains.WebStorm\"\n"
             "#ignoreTitles=\"^window$\"\n"
-            "#invertIgnoreApps=false\n"
             "#stayFocusedBundleIds=\"com.apple.SecurityAgent\"\n"
             "\n"
             "# Ask the window server which window is under the mouse instead of asking\n"
@@ -694,15 +715,12 @@ NSString *ARConfigUsage(void) {
             "  -eagerness <instant|quick|normal|relaxed>\n"
             "  -raiseAfter <400>                     ms, for focusThenRaise\n"
             "  -warpX <0.5> -warpY <0.5> -scale <2.0>\n"
-            "  -altTaskSwitcher <true|false>\n"
             "  -selfRaisingApps <focus|quiet|skip>   apps that raise themselves on focus\n"
             "  -ignoreSpaceChanged <true|false>\n"
-            "  -invertDisableKey <true|false>\n"
-            "  -invertIgnoreApps <true|false>\n"
             "  -ignoreApps \"<App1,com.example.app2, ...>\"\n"
             "  -ignoreTitles \"<Regex1,Regex2, ...>\"\n"
             "  -stayFocusedBundleIds \"<Id1,Id2, ...>\"\n"
-            "  -disableKey <control|option|command|shift|disabled>\n"
+            "  -disableKey <[!]control|option|command|shift|disabled>\n"
             "  -windowServerHitTest <true|false>     ask the window server, not the app\n"
             "  -legacyActivation <true|false>        for GTK, SDL and wine apps\n"
             "  -menuBarIcon <true|false>\n"
@@ -738,13 +756,12 @@ NSString *ARConfigSummary(ARConfig *config) {
     if (config.warpMouse) {
         [out appendFormat: @"  * warpX: %.2f, warpY: %.2f, scale: %.1f\n",
             config.warpX, config.warpY, config.cursorScale];
-        [out appendFormat: @"  * altTaskSwitcher: %s\n", config.altTaskSwitcher ? "true" : "false"];
     }
     [out appendFormat: @"  * ignoreSpaceChanged: %s\n", config.ignoreSpaceChanged ? "true" : "false"];
     [out appendFormat: @"  * disableKey: %@%@\n", config.disableKeyName,
         config.invertDisableKey ? @" (inverted)" : @""];
     for (NSString *app in config.ignoreApps) {
-        [out appendFormat: @"  * %@: %@\n", config.invertIgnoreApps ? @"includeApp" : @"ignoreApp", app];
+        [out appendFormat: @"  * ignoreApp: %@\n", app];
     }
     for (NSString *title in config.ignoreTitles) { [out appendFormat: @"  * ignoreTitle: %@\n", title]; }
     for (NSString *bundleId in config.stayFocusedBundleIds) {

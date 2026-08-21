@@ -26,7 +26,7 @@ The window has six pages:
 - **Raise & Focus**: whether a hovered window is raised, focused first and raised later, or only
   focused, plus the delays for each, how much pointer movement to ignore, and the outline that marks
   a window holding the keyboard without having been raised.
-- **Pointer**: mouse warping on window switch. Drag the pointer around a small window to say where
+- **Pointer**: mouse warping on window switch, with any switcher. Drag the pointer around a small window to say where
   it should land.
 - **Exceptions**: apps and window titles to leave alone, apps that keep the focus, and the modifier
   key that suspends AutoRaise while held. "Choose Application…" fills in names for you.
@@ -59,11 +59,12 @@ comments, ordering and any settings a future version adds are left alone.
     eagerness=normal         # instant, quick, normal or relaxed
     raiseAfter=400           # ms, only used by focusThenRaise
 
-    # Mouse warping on cmd-tab and cmd-grave. Both factors are needed.
+    # Mouse warping on a window switch. Both factors are needed. Any switcher
+    # works: a hotkey followed by an application coming forward is the signal,
+    # so nothing has to be configured for a third party one.
     warpX=0.5
     warpY=0.1
     scale=2.5                # briefly enlarge the cursor after warping, 1.0 disables
-    altTaskSwitcher=false    # set when you use a third party task switcher
 
     selfRaisingApps=focus    # focus, quiet or skip; see below
     ignoreSpaceChanged=false # do not act right after a space change
@@ -71,13 +72,14 @@ comments, ordering and any settings a future version adds are left alone.
 
     # Suspending
     disableKey=control       # control, option, command, shift or disabled
-    invertDisableKey=false   # hold the key to enable instead of disable
+                             # a ! in front holds to allow instead: !control
 
-    # Exceptions. App entries match a localized name or a bundle identifier;
-    # titles are ICU regular expressions. Escape a literal comma as \,
-    ignoreApps="IntelliJ IDEA,com.jetbrains.WebStorm"
+    # Window titles to leave alone: ICU regular expressions, a literal comma
+    # escaped as \,  Per-application behaviour lives in apps.json, below.
     ignoreTitles="^window$,\s\| Microsoft Teams"
-    invertIgnoreApps=false   # turn ignoreApps into an allow list
+
+    # The older form of the same thing, still read
+    ignoreApps="IntelliJ IDEA,com.jetbrains.WebStorm"
     stayFocusedBundleIds="com.apple.SecurityAgent"
 
     # Behaviour that used to need recompiling
@@ -108,13 +110,51 @@ comments, ordering and any settings a future version adds are left alone.
 
 The same names work as arguments, and `-key value` and `-key=value` are both accepted:
 
-    ./AutoRaise -delay 2 -warpX 0.5 -warpY 0.1 -ignoreApps "Xcode"
+    ./AutoRaise -mode focus -warpX 0.5 -warpY 0.1 -ignoreApps "Xcode"
 
 Unknown settings and malformed lines are reported at startup instead of being ignored, with the line
 number. Run `./AutoRaise -help` for the full list.
 
 Arguments beat the file, which would otherwise make a setting in the window look broken. Changing
 that setting in the window drops the argument, so the window always wins from then on.
+
+### One table, not nine lists
+
+How an application should be treated is one question, so it has one answer:
+`~/.config/AutoRaise/apps.json`, which the Exceptions page writes for you.
+
+    [
+      {"app": "com.apple.Terminal", "policy": "focus"},
+      {"app": "com.jetbrains.WebStorm", "policy": "ignore"},
+      {"app": "company.thebrowser.dia", "policy": "default",
+       "learned": true, "raisesItself": true}
+    ]
+
+`app` matches a bundle identifier or a localized name, case insensitively, and `*` matches every
+application no other line names. The policies:
+
+| policy | what hovering does |
+| --- | --- |
+| `default` | whatever `mode` says; this line is only carrying what AutoRaise learned |
+| `raise` | bring its windows forward |
+| `focus` | hand them the keyboard where they stand |
+| `quiet` | focus the application without the events it reacts to, so it stays put |
+| `ignore` | nothing at all |
+| `keepFocus` | while it is in front, hovering anything else changes nothing |
+
+A line naming an application beats `*`, and both beat every general setting. An allow list is
+therefore `{"app": "*", "policy": "ignore"}` plus a line per application you do want, which is what
+`invertIgnoreApps` used to mean.
+
+The `learned` lines are AutoRaise's own notes, not yours. It watches what an application does when it
+is focused, writes down what it finds, and acts on it next time; `raisesItself` means the application
+came forward by itself, `needsLegacyActivation` that it ignored the modern way of being activated.
+Forget them from the Exceptions page and it will work them out again. Your own lines are untouched by
+that.
+
+`ignoreApps` and `stayFocusedBundleIds` in the settings file are still read. `invertIgnoreApps` is
+not: the first time this version finds no `apps.json` it turns all three into lines here, and an
+inverted list becomes the `*` line.
 
 ### Typing is intent too
 
@@ -226,6 +266,9 @@ to the built-ins, or replace them if you set `"replaceDefaults": true`. Keys sta
 treated as comments. `quirks.json` in this repository is an empty template.
 
 If you work out a quirk for an app, a three line diff to the defaults is a welcome pull request.
+
+Quirks are shipped knowledge about applications in general; `apps.json` is what you and this machine
+have decided. When AutoRaise notices something itself it writes it there, not into the quirks.
 
 ## Two binaries
 

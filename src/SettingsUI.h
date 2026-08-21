@@ -137,6 +137,17 @@ NSTextField *ARLabel(NSString *text, NSFont *font, NSColor *color);
                    bundleIdMode:(BOOL)bundleIdMode;  // store bundle ids, not names
 @end
 
+// One application's row in the per-app table: its icon, its name, what it is
+// matched by, and a menu saying how it should be treated.
+@interface ARRuleRow : NSView
+@property (nonatomic, copy, nullable) void (^onChange)(NSInteger index);
+@property (nonatomic, copy, nullable) void (^onRemove)(void);
+- (instancetype)initWithMatch:(NSString *)match
+                         note:(nullable NSString *)note
+                      choices:(NSArray<NSString *> *)choices
+                     selected:(NSInteger)selected;
+@end
+
 // Where in a window the pointer lands after a task switch, dragged around a
 // little window mock rather than typed as two numbers.
 @interface ARWarpTargetView : NSView

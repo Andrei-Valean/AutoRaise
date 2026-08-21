@@ -15,6 +15,7 @@
 #import "Config.h"
 #import "Policy.h"
 #import "Quirks.h"
+#import "AppTable.h"
 #import "Stats.h"
 
 static int checks = 0;
@@ -203,16 +204,6 @@ static void testDecisions(void) {
     ARRaiseQuery *ignoredById = makeQuery();
     ignoredById.ignoreApps = @[@"com.apple.TextEdit"];
     CHECK(!ARDecideRaise(ignoredById).needsRaise);
-
-    CASE("invertIgnoreApps turns the list into an allow list");
-    ARRaiseQuery *inverted = makeQuery();
-    inverted.invertIgnoreApps = YES;
-    inverted.ignoreApps = @[@"TextEdit"];
-    CHECK(ARDecideRaise(inverted).needsRaise);
-    ARRaiseQuery *notListed = makeQuery();
-    notListed.invertIgnoreApps = YES;
-    notListed.ignoreApps = @[@"Safari"];
-    CHECK(!ARDecideRaise(notListed).needsRaise);
 
     CASE("an ignored title is left alone");
     ARRaiseQuery *ignoredTitle = makeQuery();
@@ -832,6 +823,140 @@ static void testConfigWriting(void) {
     [[NSFileManager defaultManager] removeItemAtPath: path error: nil];
 }
 
+//---------------------------------------------- app table -------------------------------------------------
+
+static ARAppRule *makeRule(NSString *match, ARAppPolicy policy) {
+    ARAppRule *rule = [[ARAppRule alloc] init];
+    rule.match = match;
+    rule.policy = policy;
+    return rule;
+}
+
+static void testAppTable(void) {
+    CASE("a row matches a name or a bundle identifier, either way round");
+    ARAppTable *table = [[ARAppTable alloc] initWithRules: @[
+        makeRule(@"com.apple.Safari", ARAppPolicyIgnore),
+        makeRule(@"Terminal", ARAppPolicyFocus)]];
+    ARWindow *safari = makeWindow(@"x", @"Safari", @"com.apple.safari");   // case differs
+    ARWindow *terminal = makeWindow(@"y", @"Terminal", @"com.apple.Terminal");
+    ARWindow *other = makeWindow(@"z", @"Notes", @"com.apple.Notes");
+    CHECK_EQ_INT([table policyFor: safari], ARAppPolicyIgnore);
+    CHECK_EQ_INT([table policyFor: terminal], ARAppPolicyFocus);
+    CHECK_EQ_INT([table policyFor: other], ARAppPolicyDefault);
+
+    CASE("a row saying ignore beats every general setting");
+    ARRaiseQuery *query = makeQuery();
+    query.hoveredPolicy = ARAppPolicyIgnore;
+    CHECK(!ARDecideRaise(query).needsRaise);
+
+    CASE("and a row saying raise beats an ignore list");
+    ARRaiseQuery *listed = makeQuery();
+    listed.ignoreApps = @[@"TextEdit"];
+    CHECK(!ARDecideRaise(listed).needsRaise);
+    listed.hoveredPolicy = ARAppPolicyRaise;
+    CHECK(ARDecideRaise(listed).needsRaise);
+
+    CASE("a row saying quiet marks the app as one that raises itself");
+    ARRaiseQuery *quiet = makeQuery();
+    quiet.hoveredPolicy = ARAppPolicyQuiet;
+    CHECK(ARDecideCandidate(quiet).appRaisesOnFocus);
+
+    CASE("an app that never loses the keyboard keeps it");
+    ARRaiseQuery *keeper = makeQuery();
+    keeper.focusedPolicy = ARAppPolicyKeepFocus;
+    CHECK(!ARDecideRaise(keeper).needsRaise);
+    // Its own windows are still reachable.
+    keeper.mouseWindow.pid = keeper.focusedWindow.pid;
+    CHECK(ARDecideRaise(keeper).needsRaise);
+
+    CASE("what it learns is written down once, not every time");
+    ARAppTable *learning = [[ARAppTable alloc] initWithRules: nil];
+    ARWindow *browser = makeWindow(@"page", @"Dia", @"company.thebrowser.dia");
+    CHECK([learning noteRaisesItself: browser]);
+    CHECK(![learning noteRaisesItself: browser]);      // already known
+    CHECK([learning traitsFor: browser].raisesItself);
+    CHECK(![learning traitsFor: browser].needsLegacyActivation);
+    CHECK([learning noteNeedsLegacyActivation: browser]);
+    CHECK([learning traitsFor: browser].needsLegacyActivation);
+    CHECK_EQ_INT(learning.rules.count, 1);            // one row, two traits
+    CHECK(learning.rules.firstObject.learned);
+
+    CASE("it learns against the bundle identifier, which survives translation");
+    CHECK_EQ_STR(learning.rules.firstObject.match, @"company.thebrowser.dia");
+    ARWindow *renamed = makeWindow(@"page", @"Dia in Dutch", @"company.thebrowser.dia");
+    CHECK([learning traitsFor: renamed].raisesItself);
+
+    CASE("an app with no identifier at all is learned by name");
+    ARAppTable *nameless = [[ARAppTable alloc] initWithRules: nil];
+    CHECK([nameless noteRaisesItself: makeWindow(@"w", @"XQuartz", nil)]);
+    CHECK_EQ_STR(nameless.rules.firstObject.match, @"XQuartz");
+
+    CASE("your own rows survive forgetting what it learned");
+    ARAppTable *mixed = [[ARAppTable alloc] initWithRules: @[
+        makeRule(@"com.apple.Safari", ARAppPolicyIgnore)]];
+    [mixed noteRaisesItself: makeWindow(@"p", @"Dia", @"company.thebrowser.dia")];
+    CHECK_EQ_INT(mixed.rules.count, 2);
+    [mixed forgetLearned];
+    CHECK_EQ_INT(mixed.rules.count, 1);
+    CHECK_EQ_STR(mixed.rules.firstObject.match, @"com.apple.Safari");
+
+    CASE("setting a policy by hand makes the row yours");
+    ARAppTable *editable = [[ARAppTable alloc] initWithRules: nil];
+    [editable noteRaisesItself: makeWindow(@"p", @"Dia", @"company.thebrowser.dia")];
+    CHECK(editable.rules.firstObject.learned);
+    [editable setPolicy: ARAppPolicyFocus for: @"company.thebrowser.dia"];
+    CHECK(!editable.rules.firstObject.learned);
+    CHECK_EQ_INT(editable.rules.count, 1);
+    [editable removeRuleFor: @"COMPANY.THEBROWSER.DIA"];
+    CHECK_EQ_INT(editable.rules.count, 0);
+
+    CASE("the old lists become rows, and an inverted list means the opposite");
+    ARAppTable *adopting = [[ARAppTable alloc] initWithRules: nil];
+    [adopting adoptLists: @[@"Xcode"] inverted: NO keepFocus: @[@"com.apple.SecurityAgent"]];
+    CHECK_EQ_INT([adopting policyFor: makeWindow(@"a", @"Xcode", @"com.apple.dt.Xcode")],
+                 ARAppPolicyIgnore);
+    CHECK_EQ_INT([adopting policyFor: makeWindow(@"b", @"Agent", @"com.apple.SecurityAgent")],
+                 ARAppPolicyKeepFocus);
+    ARAppTable *inverted = [[ARAppTable alloc] initWithRules: nil];
+    [inverted adoptLists: @[@"Xcode"] inverted: YES keepFocus: @[]];
+    CHECK_EQ_INT([inverted policyFor: makeWindow(@"a", @"Xcode", @"com.apple.dt.Xcode")],
+                 ARAppPolicyRaise);
+    // Which only means anything with a catch-all row leaving the rest alone.
+    CHECK_EQ_INT([inverted policyFor: makeWindow(@"b", @"Mail", @"com.apple.mail")],
+                 ARAppPolicyIgnore);
+
+    CASE("a row for * answers for every application nobody named");
+    ARAppTable *catchAll = [[ARAppTable alloc] initWithRules: @[
+        makeRule(AR_APP_TABLE_WILDCARD, ARAppPolicyIgnore),
+        makeRule(@"com.apple.Terminal", ARAppPolicyRaise)]];
+    CHECK_EQ_INT([catchAll policyFor: makeWindow(@"a", @"Mail", @"com.apple.mail")],
+                 ARAppPolicyIgnore);
+    // A row naming the application beats it, whichever order they are in.
+    CHECK_EQ_INT([catchAll policyFor: makeWindow(@"b", @"Terminal", @"com.apple.Terminal")],
+                 ARAppPolicyRaise);
+
+    CASE("and what it learns never lands on the catch-all row");
+    CHECK([catchAll noteRaisesItself: makeWindow(@"c", @"Dia", @"company.thebrowser.dia")]);
+    CHECK_EQ_INT(catchAll.rules.count, 3);
+    CHECK(![catchAll ruleForMatch: AR_APP_TABLE_WILDCARD].traits.raisesItself);
+    CHECK([catchAll traitsFor: makeWindow(@"c", @"Dia", @"company.thebrowser.dia")].raisesItself);
+    // The catch-all still decides what happens to it.
+    CHECK_EQ_INT([catchAll policyFor: makeWindow(@"c", @"Dia", @"company.thebrowser.dia")],
+                 ARAppPolicyIgnore);
+
+    CASE("every policy has a name that survives a round trip");
+    for (NSString *name in @[@"default", @"raise", @"focus", @"quiet", @"ignore", @"keepFocus"]) {
+        ARAppPolicy policy = ARAppPolicyRaise;
+        CHECK(ARAppPolicyParse(name, &policy));
+        CHECK_EQ_STR(ARAppPolicyDescribe(policy), name);
+    }
+    CHECK(!ARAppPolicyParse(@"sometimes", NULL));
+    CHECK_EQ_INT(ARAppPolicyNames().count, 6);
+
+    CASE("a damaged file leaves an empty table rather than a crash");
+    CHECK_EQ_INT([[ARAppTable alloc] initWithRules: nil].rules.count, 0);
+}
+
 //------------------------------------------------ intent --------------------------------------------------
 
 // Walks the pointer from one place to another at a given speed, one sample every
@@ -1049,6 +1174,7 @@ int main(void) {
         testConfigWriting();
         testStats();
         testIntent();
+        testAppTable();
 
         printf("%d checks, %d failures\n", checks, failures);
         return failures ? 1 : 0;

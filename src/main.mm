@@ -26,6 +26,7 @@
 
 #import <ServiceManagement/ServiceManagement.h>
 
+#import "AppTable.h"
 #import "Config.h"
 #import "FocusRing.h"
 #import "MenuBar.h"
@@ -48,6 +49,9 @@
 // used to be settings, which made people tune an implementation detail.
 #define EVALUATE_MILLIS 20
 #define HEARTBEAT_MILLIS 500
+// How long after a hotkey an application coming forward still counts as a
+// deliberate switch rather than something the application did by itself.
+#define AR_SWITCHER_GRACE 1.0
 
 // How many quiet evaluations before the fast timer stands down and the
 // heartbeat takes over again.
@@ -155,6 +159,7 @@ static void window_manager_focus_window_without_raise(
     BOOL _propagateMouseMoved;
     CGEventFlags _flags;
     NSTimeInterval _lastKeystroke;      // typing is intent too, of a different kind
+    NSTimeInterval _lastHotkey;         // a modified keystroke: maybe a task switcher
     AXUIElementRef _previousWindow;     // where the keyboard was before this
     pid_t _previousWindowPid;
 
@@ -215,6 +220,8 @@ static ARController *controller = nil;
         _lastDestroyedWindowId = kCGNullWindowID;
         controller = self;
 
+        [self adoptOldListsFrom: config];
+
         NSError *error = nil;
         NSString *quirksPath = ARQuirksUserFilePath();
         _quirks = ARQuirksLoad(quirksPath, &error);
@@ -257,6 +264,22 @@ static ARController *controller = nil;
 }
 
 //------------------------------------------------ settings ------------------------------------------------
+
+// Settings files people already have carry the lists this version replaced.
+// They become rows on the first launch that finds no table; the lists still
+// work either way, so nothing depends on this having happened.
+- (void)adoptOldListsFrom:(ARConfig *)config {
+    ARAppTable *apps = [ARAppTable shared];
+    if (apps.rules.count) { return; }
+
+    [apps adoptLists: config.ignoreApps
+            inverted: config.invertIgnoreApps
+           keepFocus: config.stayFocusedBundleIds];
+    if (apps.rules.count) {
+        printf("Moved %lu application(s) from your lists into %s\n",
+               (unsigned long) apps.rules.count, [ARAppTable path].UTF8String);
+    }
+}
 
 - (void)applyConfig:(ARConfig *)config {
     BOOL timingChanged = config.mode != _config.mode;
@@ -508,6 +531,14 @@ static CGEventRef ARTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
 
     if (type == kCGEventKeyDown) { _lastKeystroke = [NSDate timeIntervalSinceReferenceDate]; }
     _flags = CGEventGetFlags(event);
+
+    // A third party task switcher is a hotkey followed by an application coming
+    // forward. Noting when a modified keystroke happened is enough to tell that
+    // pair apart from an application activating on its own, which is why there
+    // is no longer a setting saying which switcher you use.
+    if (_flags & (kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate | kCGEventFlagMaskControl)) {
+        _lastHotkey = [NSDate timeIntervalSinceReferenceDate];
+    }
     BOOL commandPressed = (_flags & TASK_SWITCHER_MODIFIER_KEY) == TASK_SWITCHER_MODIFIER_KEY;
     static BOOL commandTabPressed = NO;
     static BOOL commandGravePressed = NO;
@@ -586,6 +617,22 @@ static BOOL ARShortcutMatches(NSString *configured, CGEventRef event) {
     if (_previousWindow) { CFRelease(_previousWindow); _previousWindow = NULL; }
     if (window) { _previousWindow = (AXUIElementRef) CFRetain(window); }
     _previousWindowPid = pid;
+}
+
+// A window that was not on top before, and is on top a moment later, brought
+// itself forward: nothing here asked for that.
+- (void)checkWhetherItRaisedItself:(ARWindow *)window wasOnTop:(CGWindowID)wasOnTop {
+    ARWindow *snapshot = window;
+    CGWindowID expected = wasOnTop;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 250 * NSEC_PER_MSEC),
+                   dispatch_get_main_queue(), ^{
+        if (ARTopmostWindowId() != snapshot.windowId) { return; }
+        if (expected == snapshot.windowId) { return; }
+        if ([[ARAppTable shared] noteRaisesItself: snapshot]) {
+            NSLog(@"%@ brings itself to the front when focused; it will be focused quietly "
+                   "from now on", snapshot.appName ?: snapshot.bundleId);
+        }
+    });
 }
 
 //------------------------------------------------ focus ring ----------------------------------------------
@@ -775,7 +822,7 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
 
 - (void)activate:(pid_t)pid {
     if (_config.verbose) { NSLog(@"Activate"); }
-    if (_config.legacyActivation) {
+    if (_config.legacyActivation || [self knownToNeedLegacyActivation: pid]) {
         // Needed by applications built on non native toolkits such as GTK, SDL
         // and wine, which ignore the modern activation call.
         ProcessSerialNumber process;
@@ -796,6 +843,31 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
     }
 }
 
+- (BOOL)knownToNeedLegacyActivation:(pid_t)pid {
+    ARWindow *facts = [[ARWindow alloc] init];
+    facts.pid = pid;
+    facts.bundleId = [NSRunningApplication runningApplicationWithProcessIdentifier: pid]
+        .bundleIdentifier;
+    facts.appName = [NSRunningApplication runningApplicationWithProcessIdentifier: pid]
+        .localizedName;
+    return [[ARAppTable shared] traitsFor: facts].needsLegacyActivation;
+}
+
+// The modern call is ignored by applications built on some other toolkit. Rather
+// than a setting nobody can be expected to know about, notice it and remember.
+- (void)checkWhetherActivationTook:(ARWindow *)window {
+    ARWindow *snapshot = window;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 250 * NSEC_PER_MSEC),
+                   dispatch_get_main_queue(), ^{
+        pid_t frontmost = [[NSWorkspace sharedWorkspace] frontmostApplication].processIdentifier;
+        if (frontmost == snapshot.pid) { return; }
+        if ([[ARAppTable shared] noteNeedsLegacyActivation: snapshot]) {
+            NSLog(@"%@ ignored being activated; the older call will be used for it from now on",
+                  snapshot.appName ?: snapshot.bundleId);
+        }
+    });
+}
+
 - (void)raiseAndActivate:(AXUIElementRef)window pid:(pid_t)pid {
     if (_config.verbose) { NSLog(@"Raise"); }
     AXError error = AXUIElementPerformAction(window, kAXRaiseAction);
@@ -812,9 +884,15 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
 
 - (BOOL)warpMouseToActivatedWindow {
     if (_config.verbose) { NSLog(@"App activated"); }
-    if (!_config.altTaskSwitcher) {
-        if (!_activatedByTaskSwitcher) { return NO; }
-        _activatedByTaskSwitcher = NO;
+    // Only a switch somebody asked for moves the pointer. Command-tab is
+    // recognized outright; any other switcher shows up as a hotkey an instant
+    // before the application arrives. An application activating by itself, a
+    // notification or a file opening, moves nothing.
+    NSTimeInterval sinceHotkey = [NSDate timeIntervalSinceReferenceDate] - _lastHotkey;
+    BOOL byHotkey = _lastHotkey > 0 && sinceHotkey < AR_SWITCHER_GRACE;
+    if (!_activatedByTaskSwitcher && !byHotkey) {
+        if (_config.verbose) { NSLog(@"Activated without a switch, not warping"); }
+        return NO;
     }
     _appWasActivated = YES;
 
@@ -840,7 +918,7 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
         }
     }
 
-    if (_config.altTaskSwitcher) {
+    {
         CGPoint mousePoint = [self currentMousePoint];
         BOOL ignoreActivated = NO;
         AXUIElementRef _mouseWindow = ARCopyWindowAtPoint(mousePoint, _config.windowServerHitTest);
@@ -864,6 +942,7 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
             ignoreActivated = YES;
         }
         _activatedByTaskSwitcher = NO;
+        _lastHotkey = 0;
 
         if (ignoreActivated) {
             if (_config.verbose) { NSLog(@"Ignoring app activated"); }
@@ -948,10 +1027,17 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         if (held != _config.invertDisableKey) { return YES; }
     }
 
-    NSString *frontmostBundleId = [[NSWorkspace sharedWorkspace] frontmostApplication].bundleIdentifier;
+    // An application that must not lose the keyboard stops the whole evaluation,
+    // before anything costs an accessibility call.
+    NSRunningApplication *frontmost = [[NSWorkspace sharedWorkspace] frontmostApplication];
+    NSString *frontmostBundleId = frontmost.bundleIdentifier;
     if (frontmostBundleId && [_config.stayFocusedBundleIds containsObject: frontmostBundleId]) {
         return YES;
     }
+    ARWindow *front = [[ARWindow alloc] init];
+    front.bundleId = frontmostBundleId;
+    front.appName = frontmost.localizedName;
+    if ([[ARAppTable shared] policyFor: front] == ARAppPolicyKeepFocus) { return YES; }
 
     // These two cost a round trip to the Dock, so they come last.
     return ARDockIsActive() || ARMissionControlIsActive();
@@ -1074,11 +1160,12 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
     NSRunningApplication *frontmost = [[NSWorkspace sharedWorkspace] frontmostApplication];
     pid_t frontmostPid = frontmost.processIdentifier;
 
+    ARAppTable *apps = [ARAppTable shared];
     ARRaiseQuery *query = [[ARRaiseQuery alloc] init];
     query.ownPid = getpid();
     query.mouseWindow = mouse;
+    query.hoveredPolicy = [apps policyFor: mouse];
     query.mouseWindowPresent = mouseWindowPresent;
-    query.invertIgnoreApps = _config.invertIgnoreApps;
     query.focusFirst = _config.focusFirst;
     query.ignoreApps = _config.ignoreApps;
     query.ignoreTitles = _config.ignoreTitles;
@@ -1092,6 +1179,7 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         _focusedWindow = ARCopyFocusedWindow(frontmostPid);
         if (_focusedWindow) {
             query.focusedWindow = ARGatherWindow(_focusedWindow, YES);
+            query.focusedPolicy = [apps policyFor: query.focusedWindow];
             if (_config.verbose) { ARLogWindowTitle(@"Focused window", _focusedWindow); }
         } else {
             if (_config.verbose) { NSLog(@"No focused window"); }
@@ -1127,8 +1215,12 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
 - (ARSavedAction)act:(AXUIElementRef)_mouseWindow facts:(ARWindow *)mouse
     focusedFacts:(ARWindow *)focused frontmost:(pid_t)frontmostPid
     decision:(ARRaiseDecision)decision {
+    ARAppPolicy policy = [[ARAppTable shared] policyFor: mouse];
+    BOOL focusFirst = _config.focusFirst;
+    if (policy == ARAppPolicyRaise) { focusFirst = NO; }
+    if (policy == ARAppPolicyFocus || policy == ARAppPolicyQuiet) { focusFirst = YES; }
 #if SKYLIGHT_AVAILABLE
-    if (_config.focusFirst) {
+    if (focusFirst) {
         ProcessSerialNumber mouseWindowPsn;
         ProcessSerialNumber focusedWindowPsn;
         ProcessSerialNumber *_focusedWindowPsn = NULL;
@@ -1150,7 +1242,9 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         // Applications that bring themselves to the front when focused get one
         // of three treatments, see selfRaisingApps.
         BOOL makeKeyWindow = YES;
-        if (decision.appRaisesOnFocus) {
+        BOOL raisesItself = decision.appRaisesOnFocus ||
+                            [[ARAppTable shared] traitsFor: mouse].raisesItself;
+        if (raisesItself) {
             switch (_config.selfRaisingApps) {
                 case ARSelfRaisingSkip:
                     if (_config.verbose) {
@@ -1168,8 +1262,15 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
                     break;
             }
         }
+        // Watch what it does with the focus: an application that comes forward
+        // by itself is worth remembering, so it can be focused quietly next
+        // time instead of surprising anybody twice.
+        CGWindowID wasOnTop = makeKeyWindow ? ARTopmostWindowId() : kCGNullWindowID;
         window_manager_focus_window_without_raise(&mouseWindowPsn, mouse.windowId,
             _focusedWindowPsn, focused.windowId, makeKeyWindow, _config.verbose);
+        if (makeKeyWindow && wasOnTop != kCGNullWindowID && wasOnTop != mouse.windowId) {
+            [self checkWhetherItRaisedItself: mouse wasOnTop: wasOnTop];
+        }
 
         [self noteFocusMovedTo: _mouseWindow pid: mouse.pid];
         if (_lastFocusedWindow) { CFRelease(_lastFocusedWindow); }
@@ -1187,6 +1288,7 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
     _lastFocusedWindow = (AXUIElementRef) CFRetain(_mouseWindow);
     _lastFocusedWindowPid = mouse.pid;
     [self raiseAndActivate: _mouseWindow pid: mouse.pid];
+    if (!_config.legacyActivation) { [self checkWhetherActivationTook: mouse]; }
     return ARSavedActionRaised;
 }
 

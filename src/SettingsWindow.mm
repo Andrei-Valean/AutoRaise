@@ -3,7 +3,10 @@
  * Distributed under the GNU General Public License v2 or later, see LICENSE.md
  */
 
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+
 #import "SettingsWindow.h"
+#import "AppTable.h"
 #import "SettingsUI.h"
 #import "Stats.h"
 
@@ -34,7 +37,7 @@ static const ARPageInfo ARPages[ARPageCount] = {
     {"Raise & Focus", "square.3.layers.3d.top.filled",
      "What happens when the pointer settles on a window."},
     {"Pointer", "cursorarrow.motionlines", "Where the pointer goes when you switch windows."},
-    {"Exceptions", "hand.raised.fill", "Apps and windows AutoRaise should leave alone."},
+    {"Exceptions", "hand.raised.fill", "How individual applications and windows are treated."},
     {"Advanced", "slider.horizontal.3", "Timing, hit testing, and diagnostics."},
     {"Statistics", "chart.bar.fill", "What hovering has saved you."},
     {"About", "info.circle.fill", NULL},
@@ -696,11 +699,6 @@ static NSColor *ARPageTint(ARPage page) {
         [scale setRowEnabled: on && weakSelf.config.warpMouse];
     };
 
-    ARToggleRow *alternative = [[ARToggleRow alloc]
-        initWithTitle: @"I use another window switcher"
-        subtitle: @"Not the one command-tab opens" on: config.altTaskSwitcher];
-    alternative.onChange = ^(BOOL on) { [weakSelf setBool: @"altTaskSwitcher" to: on]; };
-
     warp.onChange = ^(BOOL on) {
         if (on) {
             CGPoint point = target.target;
@@ -714,14 +712,12 @@ static NSColor *ARPageTint(ARPage page) {
         }
         [where setRowEnabled: on];
         [grow setRowEnabled: on];
-        [alternative setRowEnabled: on];
         [scale setRowEnabled: on && grow.toggle.state == NSControlStateValueOn];
     };
 
-    [self addCard: @[warp, where, grow, scale, alternative]];
+    [self addCard: @[warp, where, grow, scale]];
     [where setRowEnabled: warping];
     [grow setRowEnabled: warping];
-    [alternative setRowEnabled: warping];
     [scale setRowEnabled: warping && config.cursorScale > 1];
 
     [self addFootnote: @"With the pointer in the window you switched to, hovering keeps working "
@@ -739,26 +735,61 @@ static NSColor *ARPageTint(ARPage page) {
 
 - (void)buildExceptions {
     ARConfig *config = self.config;
+    ARAppTable *table = [ARAppTable shared];
     __weak ARSettingsWindowController *weakSelf = self;
 
-    ARSegmentRow *invert = [[ARSegmentRow alloc] initWithTitle: @"Treat this list as"
-        subtitle: nil choices: @[@"Apps to skip", @"The only apps to use"]
-        selected: config.invertIgnoreApps ? 1 : 0];
-    invert.onChange = ^(NSInteger index) {
-        [weakSelf setBool: @"invertIgnoreApps" to: index == 1];
-    };
+    NSArray<NSString *> *choices = ARAppPolicyNames();
+    NSMutableArray<NSView *> *rows = [NSMutableArray array];
+    BOOL anyLearned = NO;
+    for (ARAppRule *rule in table.rules) {
+        NSMutableArray<NSString *> *notes = [NSMutableArray array];
+        if (rule.learned) { [notes addObject: @"learned"]; }
+        if (rule.traits.raisesItself) { [notes addObject: @"comes forward on its own"]; }
+        if (rule.traits.needsLegacyActivation) { [notes addObject: @"needs the old way of activating"]; }
+        anyLearned = anyLearned || rule.learned;
 
-    ARListEditor *apps = [[ARListEditor alloc] initWithEntries: config.ignoreApps
-        allowsApps: YES bundleIdMode: NO];
-    apps.placeholder = @"No exceptions";
-    apps.onChange = ^(NSArray<NSString *> *entries) {
-        [weakSelf set: @"ignoreApps" to: [weakSelf joinList: entries]];
-    };
+        NSString *match = rule.match;
+        ARRuleRow *row = [[ARRuleRow alloc] initWithMatch: match
+            note: [notes componentsJoinedByString: @", "]
+            choices: choices selected: rule.policy];
+        row.onChange = ^(NSInteger index) {
+            [[ARAppTable shared] setPolicy: (ARAppPolicy) index for: match];
+            [weakSelf rebuild];
+        };
+        row.onRemove = ^{
+            [[ARAppTable shared] removeRuleFor: match];
+            [weakSelf rebuild];
+        };
+        [rows addObject: row];
+    }
 
-    [self addSectionTitle: @"APPLICATIONS"];
-    [self addCard: @[invert, [self rowWrapping: apps]]];
-    [self addFootnote: @"Choose Application… fills in the name for you. A bundle identifier such "
-                       "as com.apple.Terminal also works, and keeps working in other languages."];
+    if (!rows.count) {
+        [rows addObject: [[ARRow alloc] initWithTitle: @"No rules yet"
+            subtitle: @"Every application follows the settings on the other pages."
+            accessory: nil]];
+    }
+    [rows addObject: [[ARButtonRow alloc] initWithTitle: @"Add an application"
+        subtitle: @"Pick it once; AutoRaise remembers it by bundle identifier"
+        buttonTitle: @"Choose Application…" action: ^{ [weakSelf addAppRule]; }]];
+
+    [self addSectionTitle: @"PER-APP RULES"];
+    [self addCard: rows];
+    [self addFootnote: @"One line per application, and the line wins over every general setting. "
+                       "Leave it alone skips the application entirely; Focus without raising gives "
+                       "it the keyboard where it stands; Never lose the keyboard means that while "
+                       "it is in front, hovering elsewhere changes nothing."];
+
+    if (anyLearned) {
+        ARButtonRow *forget = [[ARButtonRow alloc] initWithTitle: @"Forget what AutoRaise learned"
+            subtitle: @"Keeps the rules you wrote and watches those applications again"
+            buttonTitle: @"Forget" action: ^{
+                [[ARAppTable shared] forgetLearned];
+                [weakSelf rebuild];
+            }];
+        [self addCard: @[forget]];
+        [self addFootnote: @"AutoRaise watches what an application does when it is focused and "
+                           "writes down what it finds, so nobody has to know it in advance."];
+    }
 
     ARListEditor *titles = [[ARListEditor alloc] initWithEntries: config.ignoreTitles
         allowsApps: NO bundleIdMode: NO];
@@ -768,34 +799,62 @@ static NSColor *ARPageTint(ARPage page) {
     };
     [self addSectionTitle: @"WINDOW TITLES"];
     [self addCard: @[[self rowWrapping: titles]]];
-    [self addFootnote: @"Regular expressions. ^Downloads$ matches that title exactly, "
-                       "Microsoft Teams matches any title containing it."];
+    [self addFootnote: @"Regular expressions, for single windows rather than whole applications. "
+                       "^Downloads$ matches that title exactly, Microsoft Teams matches any title "
+                       "containing it."];
 
-    ARListEditor *focused = [[ARListEditor alloc] initWithEntries: config.stayFocusedBundleIds
-        allowsApps: YES bundleIdMode: YES];
-    focused.placeholder = @"Nothing holds the focus";
-    focused.onChange = ^(NSArray<NSString *> *entries) {
-        [weakSelf set: @"stayFocusedBundleIds" to: [weakSelf joinList: entries]];
-    };
-    [self addSectionTitle: @"APPS THAT KEEP THE FOCUS"];
-    [self addCard: @[[self rowWrapping: focused]]];
-    [self addFootnote: @"While one of these is in front, hovering changes nothing. Useful for "
-                       "password prompts and anything else you do not want to lose focus."];
-
+    // One setting says both the key and what holding it means; the file writes
+    // the second half as a ! in front of the first.
     NSArray *keys = @[@"Control", @"Option", @"Command", @"Shift", @"None"];
     NSArray *names = @[@"control", @"option", @"command", @"shift", @"disabled"];
     NSInteger selected = [names indexOfObject: config.disableKeyName];
-    ARSegmentRow *key = [[ARSegmentRow alloc] initWithTitle: @"Hold to suspend"
-        subtitle: @"Keeps AutoRaise out of the way while the key is down"
-        choices: keys selected: selected == NSNotFound ? 4 : selected];
-    key.onChange = ^(NSInteger index) { [weakSelf set: @"disableKey" to: names[index]]; };
+    BOOL inverted = config.invertDisableKey;
+    ARSegmentRow *key = [[ARSegmentRow alloc] initWithTitle: @"Hold this key"
+        subtitle: nil choices: keys selected: selected == NSNotFound ? 4 : selected];
+    ARSegmentRow *meaning = [[ARSegmentRow alloc] initWithTitle: @"While it is down"
+        subtitle: @"So hovering can be switched off, or kept for when you ask"
+        choices: @[@"Leave windows alone", @"Raise as usual"] selected: inverted ? 1 : 0];
 
-    ARToggleRow *invertKey = [[ARToggleRow alloc] initWithTitle: @"Invert it"
-        subtitle: @"Hold the key to allow raising instead" on: config.invertDisableKey];
-    invertKey.onChange = ^(BOOL on) { [weakSelf setBool: @"invertDisableKey" to: on]; };
+    __weak ARSegmentRow *weakKey = key, *weakMeaning = meaning;
+    void (^write)(void) = ^{
+        NSInteger index = weakKey.segments.selectedSegment;
+        NSString *name = names[index < 0 ? 0 : index];
+        BOOL holdToRaise = weakMeaning.segments.selectedSegment == 1;
+        [weakSelf set: @"disableKey" to: holdToRaise && index < 4
+            ? [@"!" stringByAppendingString: name] : name];
+    };
+    key.onChange = ^(NSInteger index) { write(); };
+    meaning.onChange = ^(NSInteger index) { write(); };
+    [meaning setRowEnabled: config.disableKey != 0];
 
     [self addSectionTitle: @"MODIFIER KEY"];
-    [self addCard: @[key, invertKey]];
+    [self addCard: @[key, meaning]];
+}
+
+// Browsing for the application beats typing a localized name, and the bundle
+// identifier it yields keeps working when the name changes.
+- (void)addAppRule {
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.canChooseFiles = YES;
+    panel.canChooseDirectories = NO;
+    panel.allowsMultipleSelection = YES;
+    panel.allowedContentTypes = @[[UTType typeWithIdentifier: @"com.apple.application-bundle"]];
+    panel.directoryURL = [NSURL fileURLWithPath: @"/Applications"];
+    panel.prompt = @"Choose";
+    if ([panel runModal] != NSModalResponseOK) { return; }
+
+    for (NSURL *url in panel.URLs) {
+        NSBundle *bundle = [NSBundle bundleWithURL: url];
+        NSString *match = bundle.bundleIdentifier;
+        if (!match.length) {
+            match = [[NSFileManager defaultManager] displayNameAtPath: url.path]
+                .stringByDeletingPathExtension;
+        }
+        // Leaving it alone is what people came to this page for; the menu on the
+        // row changes it to anything else.
+        if (match.length) { [[ARAppTable shared] setPolicy: ARAppPolicyIgnore for: match]; }
+    }
+    [self rebuild];
 }
 
 - (NSString *)joinList:(NSArray<NSString *> *)entries {

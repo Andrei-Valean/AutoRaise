@@ -10,11 +10,13 @@ ifeq ($(SKYLIGHT_AVAILABLE), 1)
     FRAMEWORKS += -F /System/Library/PrivateFrameworks -framework SkyLight
 endif
 
-SOURCES := src/main.mm src/Config.mm src/FocusRing.mm src/MenuBar.mm src/Policy.mm \
+SOURCES := src/main.mm src/AppTable.mm src/Config.mm src/FocusRing.mm src/MenuBar.mm \
+           src/Policy.mm \
            src/Quirks.mm src/Shortcut.mm src/SettingsUI.mm src/SettingsWindow.mm \
            src/Stats.mm \
            src/WindowFinder.mm
-HEADERS := src/Config.h src/FocusRing.h src/MenuBar.h src/Policy.h src/Quirks.h src/Stats.h \
+HEADERS := src/AppTable.h src/Config.h src/FocusRing.h src/MenuBar.h src/Policy.h \
+           src/Quirks.h src/Stats.h \
            src/SettingsUI.h src/SettingsWindow.h src/WindowFinder.h
 OBJECTS := $(patsubst src/%.mm,build/%.o,$(SOURCES))
 
@@ -59,10 +61,10 @@ test: build/policy_tests
 	@./build/policy_tests
 
 build/policy_tests: tests/policy_tests.mm src/Policy.mm src/Quirks.mm src/Config.mm \
-                    src/Shortcut.mm src/Stats.mm $(HEADERS)
+                    src/Shortcut.mm src/Stats.mm src/AppTable.mm $(HEADERS)
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ tests/policy_tests.mm src/Policy.mm src/Quirks.mm src/Config.mm \
-	    src/Shortcut.mm src/Stats.mm \
+	    src/Shortcut.mm src/Stats.mm src/AppTable.mm \
 	    -framework Foundation -framework CoreGraphics -framework Carbon
 
 icon: AutoRaise.icns

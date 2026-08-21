@@ -208,6 +208,18 @@ NSArray<NSValue *> *ARWindowsInFrontOf(CGWindowID windowId) {
     return inFront;
 }
 
+CGWindowID ARTopmostWindowId(void) {
+    NSArray *windows = (NSArray *) CFBridgingRelease(CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+    pid_t own = getpid();
+    for (NSDictionary *window in windows) {
+        if (![window[(__bridge id) kCGWindowLayer] isEqual: @0]) { continue; }
+        if ([window[(__bridge id) kCGWindowOwnerPID] intValue] == own) { continue; }
+        return [window[(__bridge id) kCGWindowNumber] unsignedIntValue];
+    }
+    return kCGNullWindowID;
+}
+
 CGPoint ARWarpPointForWindow(AXUIElementRef window, float warpX, float warpY) {
     CGRect frame;
     if (!ARCopyRect(window, &frame)) { return CGPointZero; }

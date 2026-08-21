@@ -56,6 +56,10 @@ BOOL ARWindowFrame(AXUIElementRef window, CGRect *frame);
 // see, since there is no way to place a window of ours inside another
 // application's stacking order.
 NSArray<NSValue *> *ARWindowsInFrontOf(CGWindowID windowId);
+
+// The frontmost ordinary window, ignoring AutoRaise's own. Used to notice an
+// application bringing itself forward.
+CGWindowID ARTopmostWindowId(void);
 CGPoint ARWarpPointForWindow(AXUIElementRef window, float warpX, float warpY);
 
 // Dock and Mission Control both take over the screen; raising underneath them

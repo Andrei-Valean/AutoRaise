@@ -463,6 +463,127 @@ static void ARPin(NSView *view, NSView *container, CGFloat leading, CGFloat trai
 
 @end
 
+//------------------------------------------------ rule row ------------------------------------------------
+
+// A rule matches a bundle identifier or a localized name. Either way, if the
+// application is installed, show its icon and the name a person would recognize.
+static NSImage *ARIconForMatch(NSString *match, NSString **displayName) {
+    NSWorkspace *workspace = [NSWorkspace sharedWorkspace];
+    NSURL *url = [workspace URLForApplicationWithBundleIdentifier: match];
+    if (!url) {
+        NSString *guess = [NSString stringWithFormat: @"/Applications/%@.app", match];
+        if ([[NSFileManager defaultManager] fileExistsAtPath: guess]) {
+            url = [NSURL fileURLWithPath: guess];
+        }
+    }
+    if (!url) { return nil; }
+
+    if (displayName) {
+        NSString *name = [[NSFileManager defaultManager] displayNameAtPath: url.path];
+        *displayName = name.stringByDeletingPathExtension;
+    }
+    return [workspace iconForFile: url.path];
+}
+
+@implementation ARRuleRow {
+    NSPopUpButton *_popup;
+}
+
+- (instancetype)initWithMatch:(NSString *)match
+                         note:(NSString *)note
+                      choices:(NSArray<NSString *> *)choices
+                     selected:(NSInteger)selected {
+    if ((self = [super initWithFrame: NSZeroRect])) {
+        self.translatesAutoresizingMaskIntoConstraints = NO;
+
+        NSString *name = match;
+        NSImage *icon = ARIconForMatch(match, &name);
+        NSImageView *iconView = [NSImageView imageViewWithImage: icon ?:
+            [NSImage imageWithSystemSymbolName: @"app.dashed"
+                     accessibilityDescription: nil]];
+        iconView.imageScaling = NSImageScaleProportionallyUpOrDown;
+        iconView.contentTintColor = icon ? nil : NSColor.tertiaryLabelColor;
+        iconView.translatesAutoresizingMaskIntoConstraints = NO;
+        [self addSubview: iconView];
+
+        NSTextField *title = ARLabel(name, ARRowFont(), NSColor.labelColor);
+        [self addSubview: title];
+
+        // Only worth a second line when it says something the name does not.
+        NSMutableArray<NSString *> *details = [NSMutableArray array];
+        if (![name isEqualToString: match]) { [details addObject: match]; }
+        if (note.length) { [details addObject: note]; }
+        NSTextField *subtitle = nil;
+        if (details.count) {
+            subtitle = ARLabel([details componentsJoinedByString: @" · "],
+                               ARSubtitleFont(), NSColor.secondaryLabelColor);
+            [self addSubview: subtitle];
+        }
+
+        _popup = [NSPopUpButton buttonWithTitle: @"" target: self action: @selector(chose:)];
+        [_popup addItemsWithTitles: choices];
+        if (selected >= 0 && selected < (NSInteger) choices.count) {
+            [_popup selectItemAtIndex: selected];
+        }
+        _popup.font = ARRowFont();
+        _popup.translatesAutoresizingMaskIntoConstraints = NO;
+        [self addSubview: _popup];
+
+        NSButton *remove = [NSButton buttonWithImage:
+            [NSImage imageWithSystemSymbolName: @"minus.circle.fill"
+                     accessibilityDescription: @"Remove"]
+            target: self action: @selector(removed:)];
+        remove.bordered = NO;
+        remove.contentTintColor = NSColor.tertiaryLabelColor;
+        remove.translatesAutoresizingMaskIntoConstraints = NO;
+        remove.toolTip = @"Remove this rule";
+        [self addSubview: remove];
+
+        NSMutableArray *constraints = [@[
+            [self.heightAnchor constraintGreaterThanOrEqualToConstant: AR_ROW_HEIGHT],
+            [iconView.leadingAnchor constraintEqualToAnchor: self.leadingAnchor
+                constant: AR_ROW_INSET],
+            [iconView.centerYAnchor constraintEqualToAnchor: self.centerYAnchor],
+            [iconView.widthAnchor constraintEqualToConstant: 20],
+            [iconView.heightAnchor constraintEqualToConstant: 20],
+            [title.leadingAnchor constraintEqualToAnchor: iconView.trailingAnchor constant: 10],
+            [title.trailingAnchor constraintLessThanOrEqualToAnchor: _popup.leadingAnchor
+                constant: -12],
+            [_popup.trailingAnchor constraintEqualToAnchor: remove.leadingAnchor constant: -6],
+            [_popup.centerYAnchor constraintEqualToAnchor: self.centerYAnchor],
+            [remove.trailingAnchor constraintEqualToAnchor: self.trailingAnchor
+                constant: -AR_ROW_INSET + 2],
+            [remove.centerYAnchor constraintEqualToAnchor: self.centerYAnchor],
+        ] mutableCopy];
+
+        if (subtitle) {
+            [constraints addObjectsFromArray: @[
+                [title.topAnchor constraintEqualToAnchor: self.topAnchor constant: 8],
+                [subtitle.topAnchor constraintEqualToAnchor: title.bottomAnchor constant: 1],
+                [subtitle.leadingAnchor constraintEqualToAnchor: title.leadingAnchor],
+                [subtitle.trailingAnchor constraintLessThanOrEqualToAnchor: _popup.leadingAnchor
+                    constant: -12],
+                [self.bottomAnchor constraintEqualToAnchor: subtitle.bottomAnchor constant: 8],
+            ]];
+        } else {
+            [constraints addObject: [title.centerYAnchor
+                constraintEqualToAnchor: self.centerYAnchor]];
+        }
+        [NSLayoutConstraint activateConstraints: constraints];
+    }
+    return self;
+}
+
+- (void)chose:(id)sender {
+    if (self.onChange) { self.onChange(_popup.indexOfSelectedItem); }
+}
+
+- (void)removed:(id)sender {
+    if (self.onRemove) { self.onRemove(); }
+}
+
+@end
+
 //----------------------------------------------- list editor ----------------------------------------------
 
 @interface ARListEditor () <NSTableViewDataSource, NSTableViewDelegate>

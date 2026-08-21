@@ -17,6 +17,22 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+// How one application should be treated, whatever the general setting says. The
+// table that stores these lives in AppTable.h; the vocabulary lives here,
+// because the decision is made in this file.
+typedef NS_ENUM(NSInteger, ARAppPolicy) {
+    ARAppPolicyDefault = 0,   // whatever the general mode says
+    ARAppPolicyRaise,         // bring its windows forward on hover
+    ARAppPolicyFocus,         // give them the keyboard, leave them where they are
+    ARAppPolicyQuiet,         // focus the application, do not name the window
+    ARAppPolicyIgnore,        // never touch it
+    ARAppPolicyKeepFocus,     // while it is in front, hovering elsewhere changes nothing
+};
+
+BOOL ARAppPolicyParse(NSString *_Nullable text, ARAppPolicy *policy);
+NSString *ARAppPolicyDescribe(ARAppPolicy policy);
+NSArray<NSString *> *ARAppPolicyNames(void);   // for the settings window, in menu order
+
 // Facts about one window plus the application owning it. All rectangles are in
 // CoreGraphics coordinates (origin top-left of the primary display).
 @interface ARWindow : NSObject
@@ -60,8 +76,11 @@ typedef struct {
 @property (nonatomic, strong) ARWindow *focusedWindow;   // known == NO: frontmost app has none
 @property (nonatomic) BOOL mouseWindowPresent;           // window was not destroyed under us
 @property (nonatomic) BOOL frontmostHasMainWindow;
-@property (nonatomic) BOOL invertIgnoreApps;
 @property (nonatomic) pid_t ownPid;          // AutoRaise never raises itself
+// What the app table says about the hovered window's application, and about the
+// one that currently holds the keyboard.
+@property (nonatomic) ARAppPolicy hoveredPolicy;
+@property (nonatomic) ARAppPolicy focusedPolicy;
 @property (nonatomic) BOOL focusFirst;
 @property (nonatomic, copy) NSArray<NSString *> *ignoreApps;
 @property (nonatomic, copy) NSArray<NSString *> *ignoreTitles;

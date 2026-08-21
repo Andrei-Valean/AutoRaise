@@ -99,17 +99,22 @@ ARRaiseDecision ARDecideCandidate(ARRaiseQuery *query) {
     // AutoRaise's own windows, the focus ring above all, are not candidates.
     if (query.ownPid && mouse.pid == query.ownPid) { return decision; }
 
-    BOOL needsRaise = !query.invertIgnoreApps && query.mouseWindowPresent;
+    // One row in the app table beats every general setting.
+    if (query.hoveredPolicy == ARAppPolicyIgnore) { return decision; }
+
+    BOOL needsRaise = query.mouseWindowPresent;
 
     if (needsRaise && ARTitleMatches(mouse.title, quirks.titlesNeedingMainWindowCheck, nil)) {
         needsRaise = ARIsMainWindow(mouse, quirks);
     } else if (needsRaise && ARTitleMatches(mouse.title, quirks.ignoreTitles, query.ignoreTitles)) {
         needsRaise = NO;
     } else if (query.mouseWindowPresent) {
-        if (ARMatchesApp(mouse, query.ignoreApps) || ARMatchesApp(mouse, quirks.ignoreApps)) {
-            needsRaise = query.invertIgnoreApps;
+        if (query.hoveredPolicy == ARAppPolicyDefault &&
+            (ARMatchesApp(mouse, query.ignoreApps) || ARMatchesApp(mouse, quirks.ignoreApps))) {
+            needsRaise = NO;
         }
-        decision.appRaisesOnFocus = ARMatchesApp(mouse, quirks.appsRaisingOnFocus);
+        decision.appRaisesOnFocus = query.hoveredPolicy == ARAppPolicyQuiet ||
+                                    ARMatchesApp(mouse, quirks.appsRaisingOnFocus);
     }
 
     decision.needsRaise = needsRaise;
@@ -132,6 +137,9 @@ BOOL ARDecideAgainstFocused(ARRaiseQuery *query, ARRaiseDecision candidate) {
     // A password prompt or another system dialog keeps the keyboard until it is
     // dealt with. Hovering past it must not take the focus away.
     if (focused.isSystemDialog) { return NO; }
+
+    // Nor may an application whose row says it never loses the keyboard.
+    if (query.focusedPolicy == ARAppPolicyKeepFocus && mouse.pid != focused.pid) { return NO; }
 
     // The focused window sitting inside the hovered one is what a dialog
     // belonging to it looks like, and raising the parent over its own dialog
@@ -338,3 +346,39 @@ NSString *AREagernessDescribe(AREagerness eagerness) {
 }
 
 @end
+
+//--------------------------------------------- app policies -------------------------------------------------
+
+BOOL ARAppPolicyParse(NSString *text, ARAppPolicy *policy) {
+    static NSDictionary<NSString *, NSNumber *> *names = nil;
+    if (!names) {
+        names = @{@"default": @(ARAppPolicyDefault), @"": @(ARAppPolicyDefault),
+                  @"raise": @(ARAppPolicyRaise),
+                  @"focus": @(ARAppPolicyFocus),
+                  @"quiet": @(ARAppPolicyQuiet),
+                  @"ignore": @(ARAppPolicyIgnore), @"leave": @(ARAppPolicyIgnore),
+                  @"keepfocus": @(ARAppPolicyKeepFocus), @"keep": @(ARAppPolicyKeepFocus)};
+    }
+    if (![text isKindOfClass: [NSString class]]) { return NO; }
+    NSNumber *found = names[[[text stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceCharacterSet]] lowercaseString]];
+    if (!found) { return NO; }
+    if (policy) { *policy = (ARAppPolicy) found.integerValue; }
+    return YES;
+}
+
+NSString *ARAppPolicyDescribe(ARAppPolicy policy) {
+    switch (policy) {
+        case ARAppPolicyRaise: return @"raise";
+        case ARAppPolicyFocus: return @"focus";
+        case ARAppPolicyQuiet: return @"quiet";
+        case ARAppPolicyIgnore: return @"ignore";
+        case ARAppPolicyKeepFocus: return @"keepFocus";
+        default: return @"default";
+    }
+}
+
+NSArray<NSString *> *ARAppPolicyNames(void) {
+    return @[@"Follow the general setting", @"Always raise", @"Focus without raising",
+             @"Focus quietly", @"Leave it alone", @"Never lose the keyboard"];
+}
