@@ -5,6 +5,7 @@
 
 #import "SettingsWindow.h"
 #import "SettingsUI.h"
+#import "Stats.h"
 
 #define AR_SIDEBAR_WIDTH 196.0
 #define AR_PANE_MARGIN 24.0
@@ -17,6 +18,7 @@ typedef NS_ENUM(NSInteger, ARPage) {
     ARPageWarp,
     ARPageExceptions,
     ARPageAdvanced,
+    ARPageStats,
     ARPageAbout,
     ARPageCount,
 };
@@ -34,6 +36,7 @@ static const ARPageInfo ARPages[ARPageCount] = {
     {"Pointer", "cursorarrow.motionlines", "Where the pointer goes when you switch windows."},
     {"Exceptions", "hand.raised.fill", "Apps and windows AutoRaise should leave alone."},
     {"Advanced", "slider.horizontal.3", "Timing, hit testing, and diagnostics."},
+    {"Statistics", "chart.bar.fill", "What hovering has saved you."},
     {"About", "info.circle.fill", NULL},
 };
 
@@ -44,6 +47,7 @@ static NSColor *ARPageTint(ARPage page) {
         case ARPageWarp: return NSColor.systemPurpleColor;
         case ARPageExceptions: return NSColor.systemOrangeColor;
         case ARPageAdvanced: return NSColor.systemTealColor;
+        case ARPageStats: return NSColor.systemIndigoColor;
         default: return NSColor.systemPinkColor;
     }
 }
@@ -254,6 +258,7 @@ static NSColor *ARPageTint(ARPage page) {
         case ARPageWarp: [self buildWarp]; break;
         case ARPageExceptions: [self buildExceptions]; break;
         case ARPageAdvanced: [self buildAdvanced]; break;
+        case ARPageStats: [self buildStats]; break;
         default: [self buildAbout]; break;
     }
 
@@ -936,6 +941,119 @@ static ARRaiseMode ARModeForConfig(ARConfig *config) {
     alert.alertStyle = NSAlertStyleWarning;
     if ([alert runModal] == NSAlertFirstButtonReturn) {
         [_delegate resetAllSettings];
+        [self rebuild];
+    }
+}
+
+//----------------------------------------------- statistics -----------------------------------------------
+
+static NSString *ARGrouped(NSInteger value) {
+    static NSNumberFormatter *formatter = nil;
+    if (!formatter) {
+        formatter = [[NSNumberFormatter alloc] init];
+        formatter.numberStyle = NSNumberFormatterDecimalStyle;
+    }
+    return [formatter stringFromNumber: @(value)];
+}
+
+- (NSView *)tileRow:(NSArray<NSView *> *)tiles {
+    NSStackView *row = [NSStackView stackViewWithViews: tiles];
+    row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+    row.distribution = NSStackViewDistributionFillEqually;
+    row.spacing = 8;
+    row.translatesAutoresizingMaskIntoConstraints = NO;
+    return row;
+}
+
+- (void)buildStats {
+    ARStats *stats = [ARStats shared];
+    __weak ARSettingsWindowController *weakSelf = self;
+    NSInteger saved = stats.clicksSaved;
+
+    // The page leads with one figure, because that is the question being asked.
+    NSDateFormatter *since = [[NSDateFormatter alloc] init];
+    since.dateStyle = NSDateFormatterMediumStyle;
+    since.timeStyle = NSDateFormatterNoStyle;
+    NSString *caption = saved > 0
+        ? [NSString stringWithFormat: @"clicks you did not have to make, since %@",
+           [since stringFromDate: stats.since]]
+        : @"no clicks saved yet: hover a window that is not in front and this starts counting";
+    [self add: [[ARHeroFigure alloc] initWithValue: ARGrouped(saved) caption: caption]
+        spacingAfter: 20];
+
+    // A handful of headline numbers, each its own tile rather than a chart.
+    NSMutableArray *tiles = [NSMutableArray array];
+    [tiles addObject: [ARCard cardWithRows: @[[[ARStatTile alloc]
+        initWithValue: ARGrouped(stats.today) label: @"today"]]]];
+    [tiles addObject: [ARCard cardWithRows: @[[[ARStatTile alloc]
+        initWithValue: ARGrouped(stats.raises) label: @"windows raised"]]]];
+    [tiles addObject: [ARCard cardWithRows: @[[[ARStatTile alloc]
+        initWithValue: ARGrouped(stats.focuses) label: @"focused where they stood"]]]];
+    [self add: [self tileRow: tiles] spacingAfter: 8];
+
+    if (stats.shortcutRaises > 0 || stats.warps > 0) {
+        NSScreen *screen = NSScreen.screens.firstObject;
+        CGFloat widths = screen ? stats.warpPixels / NSWidth(screen.frame) : 0;
+        NSMutableArray *more = [NSMutableArray array];
+        [more addObject: [ARCard cardWithRows: @[[[ARStatTile alloc]
+            initWithValue: ARGrouped(stats.shortcutRaises) label: @"raised by shortcut"]]]];
+        [more addObject: [ARCard cardWithRows: @[[[ARStatTile alloc]
+            initWithValue: ARGrouped(stats.warps) label: @"pointer warps"]]]];
+        [more addObject: [ARCard cardWithRows: @[[[ARStatTile alloc]
+            initWithValue: [NSString stringWithFormat: @"%.0f", widths]
+            label: @"screen widths the pointer skipped"]]]];
+        [self add: [self tileRow: more] spacingAfter: 8];
+    }
+
+    [self addFootnote: @"A window raised or focused because you hovered it is a click you would "
+                       "otherwise have made. Repeated attempts to make one app listen count once."];
+
+    // Fourteen days of one series: a column each, so no legend is needed.
+    NSTextField *chartTitle = ARLabel(@"Clicks saved per day",
+        [NSFont systemFontOfSize: 12 weight: NSFontWeightSemibold], NSColor.labelColor);
+    NSView *chartHeader = [[NSView alloc] init];
+    chartHeader.translatesAutoresizingMaskIntoConstraints = NO;
+    [chartHeader addSubview: chartTitle];
+    [NSLayoutConstraint activateConstraints: @[
+        [chartTitle.topAnchor constraintEqualToAnchor: chartHeader.topAnchor constant: 12],
+        [chartTitle.leadingAnchor constraintEqualToAnchor: chartHeader.leadingAnchor
+            constant: AR_ROW_INSET],
+        [chartHeader.bottomAnchor constraintEqualToAnchor: chartTitle.bottomAnchor],
+    ]];
+    ARColumnChart *chart = [[ARColumnChart alloc]
+        initWithCounts: [stats countsForLastDays: 14] endDate: [NSDate date]
+        tint: NSColor.controlAccentColor];
+    [self addSectionTitle: @"THE LAST TWO WEEKS"];
+    [self addCard: @[chartHeader, chart]];
+
+    NSArray<ARAppTally *> *top = [stats topApps: 5];
+    if (top.count) {
+        NSMutableArray *rows = [NSMutableArray array];
+        NSInteger largest = top.firstObject.count;
+        for (ARAppTally *tally in top) {
+            [rows addObject: [[ARRankRow alloc] initWithName: tally.name value: tally.count
+                largest: largest tint: NSColor.controlAccentColor]];
+        }
+        [self addSectionTitle: @"WHERE THOSE CLICKS WOULD HAVE GONE"];
+        [self addCard: rows];
+    }
+
+    ARButtonRow *reset = [[ARButtonRow alloc] initWithTitle: @"Start counting again"
+        subtitle: @"Clears the figures on this page, nothing else"
+        buttonTitle: @"Reset…" action: ^{ [weakSelf confirmStatsReset]; }];
+    [self addCard: @[reset]];
+}
+
+- (void)confirmStatsReset {
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"Start counting again?";
+    alert.informativeText = @"The figures on this page go back to zero. Your settings are not "
+                             "affected.";
+    [alert addButtonWithTitle: @"Reset"];
+    [alert addButtonWithTitle: @"Cancel"];
+    alert.alertStyle = NSAlertStyleWarning;
+    if ([alert runModal] == NSAlertFirstButtonReturn) {
+        [[ARStats shared] reset];
         [self rebuild];
     }
 }

@@ -31,6 +31,7 @@
 #import "MenuBar.h"
 #import "Policy.h"
 #import "Quirks.h"
+#import "Stats.h"
 #import "SettingsWindow.h"
 #import "WindowFinder.h"
 
@@ -179,6 +180,7 @@ static void window_manager_focus_window_without_raise(
     NSTimer *_fastTimer;
     NSTimer *_heartbeatTimer;
     NSTimer *_permissionTimer;
+    NSTimer *_statsTimer;
     CFMachPortRef _eventTap;
     CFRunLoopSourceRef _eventTapSource;
     dispatch_source_t _configWatcher;
@@ -226,6 +228,7 @@ static ARController *controller = nil;
 
 // Anything that must be undone before the process goes away, however it goes.
 - (void)shutDown {
+    [[ARStats shared] flush: YES];
     [self hideFocusRing];
     [self restoreCursorScale];
     [_menuBar remove];
@@ -352,6 +355,15 @@ static ARController *controller = nil;
     _fastTimer = nil;
     [_heartbeatTimer invalidate];
     _heartbeatTimer = nil;
+
+    // The figures are written from here rather than as they are counted, and
+    // they are worth writing even when nothing is being raised: warping counts.
+    if (!_statsTimer) {
+        _statsTimer = [NSTimer scheduledTimerWithTimeInterval: 60 target: self
+            selector: @selector(flushStats:) userInfo: nil repeats: YES];
+        _statsTimer.tolerance = 30;
+    }
+
     if (![self needsEvaluation]) { return; }
 
     if (_config.heartbeatMillis) {
@@ -390,6 +402,8 @@ static ARController *controller = nil;
     _havePoint = NO;
     if ([self evaluate]) { [self wakeUp]; }
 }
+
+- (void)flushStats:(NSTimer *)timer { [[ARStats shared] flush: NO]; }
 
 - (void)startPermissionWatch {
     if (_permissionTimer) { return; }
@@ -535,6 +549,7 @@ static BOOL ARShortcutMatches(NSString *configured, CGEventRef event) {
         return;
     }
     if (_config.verbose) { NSLog(@"Raise shortcut"); }
+    [[ARStats shared] recordShortcutRaise];
     [self raiseAndActivate: _lastFocusedWindow pid: _lastFocusedWindowPid];
     [self hideFocusRing];
 }
@@ -803,7 +818,10 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
 
     if (_activatedWindow) {
         if (_config.verbose) { NSLog(@"Warp mouse"); }
-        CGWarpMouseCursorPosition(ARWarpPointForWindow(_activatedWindow, _config.warpX, _config.warpY));
+        CGPoint from = [self currentMousePoint];
+        CGPoint to = ARWarpPointForWindow(_activatedWindow, _config.warpX, _config.warpY);
+        CGWarpMouseCursorPosition(to);
+        [[ARStats shared] recordWarpOver: hypot(to.x - from.x, to.y - from.y)];
         CFRelease(_activatedWindow);
     }
     return YES;
@@ -1013,8 +1031,14 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         _delay = step.state;
         busy = YES;
         if (step.act) {
-            [self act: _mouseWindow facts: mouse focusedFacts: query.focusedWindow
-                frontmost: frontmostPid decision: decision];
+            ARSavedAction action = [self act: _mouseWindow facts: mouse
+                focusedFacts: query.focusedWindow frontmost: frontmostPid decision: decision];
+            // The same hover is acted on a few times over, to convince apps that
+            // ignore the first attempt. Only the first one is a click saved.
+            if (_delay.raiseTimes == AR_RAISE_REPEATS) {
+                [[ARStats shared] recordAction: action app: mouse.appName
+                                      bundleId: mouse.bundleId];
+            }
         }
     } else {
         _delay = ARResetDelay();
@@ -1024,7 +1048,7 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
     return busy;
 }
 
-- (void)act:(AXUIElementRef)_mouseWindow facts:(ARWindow *)mouse
+- (ARSavedAction)act:(AXUIElementRef)_mouseWindow facts:(ARWindow *)mouse
     focusedFacts:(ARWindow *)focused frontmost:(pid_t)frontmostPid
     decision:(ARRaiseDecision)decision {
 #if SKYLIGHT_AVAILABLE
@@ -1034,7 +1058,7 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         ProcessSerialNumber *_focusedWindowPsn = NULL;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        if (GetProcessForPID(mouse.pid, &mouseWindowPsn) != noErr) { return; }
+        if (GetProcessForPID(mouse.pid, &mouseWindowPsn) != noErr) { return ARSavedActionNone; }
         if (focused.known && GetProcessForPID(frontmostPid, &focusedWindowPsn) == noErr) {
             _focusedWindowPsn = &focusedWindowPsn;
         }
@@ -1045,7 +1069,7 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
             // it, and leaving it alone would make hovering one do nothing.
             if (_config.verbose) { NSLog(@"Floating window, raising instead of focusing"); }
             [self raiseAndActivate: _mouseWindow pid: mouse.pid];
-            return;
+            return ARSavedActionRaised;
         }
         // Applications that bring themselves to the front when focused get one
         // of three treatments, see selfRaisingApps.
@@ -1056,7 +1080,7 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
                     if (_config.verbose) {
                         NSLog(@"%@ raises itself when focused, leaving it alone", mouse.appName);
                     }
-                    return;
+                    return ARSavedActionNone;
                 case ARSelfRaisingQuiet:
                     makeKeyWindow = NO;
                     if (_config.verbose) {
@@ -1076,10 +1100,11 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         _lastFocusedWindowPid = mouse.pid;
         [self showFocusRingAround: _mouseWindow];
         if (_config.raiseAfterFocusTicks) { [self windowFocused: _lastFocusedWindow]; }
-        return;
+        return ARSavedActionFocused;
     }
 #endif
     [self raiseAndActivate: _mouseWindow pid: mouse.pid];
+    return ARSavedActionRaised;
 }
 
 //--------------------------------------------- menu bar glue ----------------------------------------------

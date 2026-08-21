@@ -32,7 +32,20 @@ The window has six pages:
   key that suspends AutoRaise while held. "Choose Application…" fills in names for you.
 - **Advanced**: hit testing, activation method, timing, live reload, verbose logging, a diagnostics
   report to paste into bug reports, and reset.
+- **Statistics**: how many clicks hovering has saved you, the last two weeks day by day, and
+  which applications those clicks would have gone to.
 - **About**: version, links, and what this installation is actually doing.
+
+### Statistics
+
+Every window AutoRaise raises or focuses because you hovered it is a click you did not make, and the
+Statistics page counts them. A hover acted on several times over, which is how apps that ignore the
+first attempt are convinced, counts once.
+
+The figures live in `~/.config/AutoRaise/stats.json`, written at most once a minute and again on
+quit, so counting costs an increment rather than a write. Nothing leaves the machine: there is no
+network code in AutoRaise at all. Pointer warps are counted separately, in warps and in the distance
+the pointer skipped, because a warp saves travel rather than a click. Reset is on the page.
 
 ### The settings file
 

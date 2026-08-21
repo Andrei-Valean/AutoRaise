@@ -9,6 +9,7 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #import "Config.h"   // shortcut parsing and formatting
+#import "Stats.h"    // day labels for the chart
 
 NSFont *ARTitleFont(void) { return [NSFont systemFontOfSize: 22 weight: NSFontWeightBold]; }
 NSFont *ARRowFont(void) { return [NSFont systemFontOfSize: 13]; }
@@ -957,5 +958,256 @@ static void ARPin(NSView *view, NSView *container, CGFloat leading, CGFloat trai
 }
 
 - (void)pressed:(id)sender { if (self.handler) { self.handler(); } }
+
+@end
+
+//----------------------------------------------- figures ---------------------------------------------------
+
+@implementation ARHeroFigure
+
+- (instancetype)initWithValue:(NSString *)value caption:(NSString *)caption {
+    if ((self = [super initWithFrame: NSZeroRect])) {
+        self.translatesAutoresizingMaskIntoConstraints = NO;
+        // Big enough to be the thing you read first, in ink rather than the
+        // data colour.
+        NSTextField *figure = ARLabel(value,
+            [NSFont monospacedDigitSystemFontOfSize: 52 weight: NSFontWeightBold],
+            NSColor.labelColor);
+        NSTextField *label = ARLabel(caption, [NSFont systemFontOfSize: 13],
+                                     NSColor.secondaryLabelColor);
+        label.preferredMaxLayoutWidth = AR_CONTENT_WIDTH - AR_ROW_INSET * 2;
+        [self addSubview: figure];
+        [self addSubview: label];
+        [NSLayoutConstraint activateConstraints: @[
+            [figure.topAnchor constraintEqualToAnchor: self.topAnchor],
+            [figure.leadingAnchor constraintEqualToAnchor: self.leadingAnchor],
+            [figure.trailingAnchor constraintLessThanOrEqualToAnchor: self.trailingAnchor],
+            [label.topAnchor constraintEqualToAnchor: figure.bottomAnchor constant: 2],
+            [label.leadingAnchor constraintEqualToAnchor: self.leadingAnchor],
+            [label.trailingAnchor constraintEqualToAnchor: self.trailingAnchor],
+            [self.bottomAnchor constraintEqualToAnchor: label.bottomAnchor],
+        ]];
+    }
+    return self;
+}
+
+@end
+
+@implementation ARStatTile
+
+- (instancetype)initWithValue:(NSString *)value label:(NSString *)label {
+    if ((self = [super initWithFrame: NSZeroRect])) {
+        self.translatesAutoresizingMaskIntoConstraints = NO;
+        NSTextField *figure = ARLabel(value,
+            [NSFont monospacedDigitSystemFontOfSize: 22 weight: NSFontWeightSemibold],
+            NSColor.labelColor);
+        NSTextField *caption = ARLabel(label, ARSubtitleFont(), NSColor.secondaryLabelColor);
+        caption.preferredMaxLayoutWidth = 150;
+        [self addSubview: figure];
+        [self addSubview: caption];
+        [NSLayoutConstraint activateConstraints: @[
+            [figure.topAnchor constraintEqualToAnchor: self.topAnchor constant: 12],
+            [figure.leadingAnchor constraintEqualToAnchor: self.leadingAnchor
+                constant: AR_ROW_INSET],
+            [figure.trailingAnchor constraintLessThanOrEqualToAnchor: self.trailingAnchor
+                constant: -AR_ROW_INSET],
+            [caption.topAnchor constraintEqualToAnchor: figure.bottomAnchor constant: 1],
+            [caption.leadingAnchor constraintEqualToAnchor: figure.leadingAnchor],
+            [caption.trailingAnchor constraintEqualToAnchor: self.trailingAnchor
+                constant: -AR_ROW_INSET],
+            [self.bottomAnchor constraintEqualToAnchor: caption.bottomAnchor constant: 12],
+        ]];
+    }
+    return self;
+}
+
+@end
+
+//--------------------------------------------- column chart -----------------------------------------------
+
+#define AR_COLUMN_MAX_WIDTH 24.0
+#define AR_COLUMN_GAP 2.0
+#define AR_COLUMN_CAP 4.0
+#define AR_CHART_LABEL_HEIGHT 16.0
+
+@implementation ARColumnChart {
+    NSArray<NSNumber *> *_counts;
+    NSDate *_endDate;
+    NSColor *_tint;
+}
+
+- (instancetype)initWithCounts:(NSArray<NSNumber *> *)counts
+                       endDate:(NSDate *)endDate
+                       tint:(NSColor *)tint {
+    if ((self = [super initWithFrame: NSZeroRect])) {
+        self.translatesAutoresizingMaskIntoConstraints = NO;
+        _counts = [counts copy];
+        _endDate = endDate;
+        _tint = tint;
+        [self.heightAnchor constraintEqualToConstant: 132].active = YES;
+    }
+    return self;
+}
+
+- (NSInteger)largest {
+    NSInteger largest = 0;
+    for (NSNumber *count in _counts) { largest = MAX(largest, count.integerValue); }
+    return largest;
+}
+
+- (void)drawRect:(NSRect)dirty {
+    if (!_counts.count) { return; }
+    NSRect bounds = NSInsetRect(self.bounds, AR_ROW_INSET, 0);
+    CGFloat baseline = NSMinY(bounds) + AR_CHART_LABEL_HEIGHT;
+    CGFloat plotHeight = NSMaxY(bounds) - baseline - 18;   // room for the one label
+    NSInteger largest = [self largest];
+
+    // One hairline baseline, a step off the surface. No gridlines: fourteen
+    // columns and a labelled maximum carry the reading on their own.
+    [[NSColor.separatorColor colorWithAlphaComponent: 0.9] setStroke];
+    NSBezierPath *axis = [NSBezierPath bezierPath];
+    axis.lineWidth = 1;
+    [axis moveToPoint: NSMakePoint(NSMinX(bounds), baseline - 0.5)];
+    [axis lineToPoint: NSMakePoint(NSMaxX(bounds), baseline - 0.5)];
+    [axis stroke];
+
+    CGFloat slot = bounds.size.width / _counts.count;
+    CGFloat width = fmin(AR_COLUMN_MAX_WIDTH, slot - AR_COLUMN_GAP);
+    NSInteger peakIndex = -1;
+    for (NSInteger i = 0; i < (NSInteger) _counts.count; i++) {
+        if (_counts[i].integerValue == largest && largest > 0) { peakIndex = i; }
+    }
+
+    for (NSInteger i = 0; i < (NSInteger) _counts.count; i++) {
+        NSInteger value = _counts[i].integerValue;
+        CGFloat x = NSMinX(bounds) + slot * i + (slot - width) / 2;
+        CGFloat height = largest > 0 ? plotHeight * value / largest : 0;
+
+        if (value == 0) {
+            // A day with nothing gets a token of a column, so the axis reads as
+            // a series of days rather than a gap.
+            NSRect stub = NSMakeRect(x, baseline, width, 2);
+            [[NSColor.separatorColor colorWithAlphaComponent: 0.7] setFill];
+            [[NSBezierPath bezierPathWithRect: stub] fill];
+            continue;
+        }
+        height = fmax(height, AR_COLUMN_CAP);
+
+        // Rounded at the data end, square at the baseline.
+        NSRect bar = NSMakeRect(x, baseline, width, height);
+        NSBezierPath *column = [NSBezierPath bezierPath];
+        CGFloat radius = fmin(AR_COLUMN_CAP, width / 2);
+        [column moveToPoint: NSMakePoint(NSMinX(bar), NSMinY(bar))];
+        [column lineToPoint: NSMakePoint(NSMinX(bar), NSMaxY(bar) - radius)];
+        [column appendBezierPathWithArcFromPoint: NSMakePoint(NSMinX(bar), NSMaxY(bar))
+            toPoint: NSMakePoint(NSMinX(bar) + radius, NSMaxY(bar)) radius: radius];
+        [column lineToPoint: NSMakePoint(NSMaxX(bar) - radius, NSMaxY(bar))];
+        [column appendBezierPathWithArcFromPoint: NSMakePoint(NSMaxX(bar), NSMaxY(bar))
+            toPoint: NSMakePoint(NSMaxX(bar), NSMaxY(bar) - radius) radius: radius];
+        [column lineToPoint: NSMakePoint(NSMaxX(bar), NSMinY(bar))];
+        [column closePath];
+        [(i == peakIndex ? _tint : [_tint colorWithAlphaComponent: 0.55]) setFill];
+        [column fill];
+
+        // The extreme is the only column with a number on it.
+        if (i == peakIndex) {
+            NSString *text = [NSString stringWithFormat: @"%ld", (long) value];
+            NSDictionary *attributes = @{
+                NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize: 10
+                    weight: NSFontWeightSemibold],
+                NSForegroundColorAttributeName: NSColor.secondaryLabelColor};
+            NSSize size = [text sizeWithAttributes: attributes];
+            [text drawAtPoint: NSMakePoint(NSMidX(bar) - size.width / 2, NSMaxY(bar) + 3)
+                withAttributes: attributes];
+        }
+    }
+
+    // Two dates, at the ends, rather than fourteen.
+    NSDictionary *dayAttributes = @{
+        NSFontAttributeName: [NSFont systemFontOfSize: 10],
+        NSForegroundColorAttributeName: NSColor.tertiaryLabelColor};
+    NSCalendar *calendar = [NSCalendar currentCalendar];
+    NSDate *first = [calendar dateByAddingUnit: NSCalendarUnitDay
+        value: -((NSInteger) _counts.count - 1) toDate: _endDate options: 0];
+    [[ARStats shortDayLabelFor: first] drawAtPoint: NSMakePoint(NSMinX(bounds), NSMinY(bounds))
+        withAttributes: dayAttributes];
+    NSString *last = @"today";
+    NSSize lastSize = [last sizeWithAttributes: dayAttributes];
+    [last drawAtPoint: NSMakePoint(NSMaxX(bounds) - lastSize.width, NSMinY(bounds))
+        withAttributes: dayAttributes];
+}
+
+// The value of a day is one hover away, rather than printed fourteen times.
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    [self removeAllToolTips];
+    if (!_counts.count) { return; }
+    NSRect bounds = NSInsetRect(self.bounds, AR_ROW_INSET, 0);
+    CGFloat slot = bounds.size.width / _counts.count;
+    NSCalendar *calendar = [NSCalendar currentCalendar];
+    for (NSInteger i = 0; i < (NSInteger) _counts.count; i++) {
+        NSRect slotRect = NSMakeRect(NSMinX(bounds) + slot * i, NSMinY(bounds), slot,
+                                     bounds.size.height);
+        NSDate *day = [calendar dateByAddingUnit: NSCalendarUnitDay
+            value: -((NSInteger) _counts.count - 1 - i) toDate: _endDate options: 0];
+        NSString *tip = [NSString stringWithFormat: @"%@: %ld",
+            [ARStats shortDayLabelFor: day], (long) _counts[i].integerValue];
+        [self addToolTipRect: slotRect owner: tip userData: NULL];
+    }
+}
+
+@end
+
+//------------------------------------------------ rank row ------------------------------------------------
+
+@implementation ARRankRow {
+    NSInteger _value;
+    NSInteger _largest;
+    NSColor *_tint;
+}
+
+- (instancetype)initWithName:(NSString *)name
+                       value:(NSInteger)value
+                     largest:(NSInteger)largest
+                        tint:(NSColor *)tint {
+    if ((self = [super initWithFrame: NSZeroRect])) {
+        self.translatesAutoresizingMaskIntoConstraints = NO;
+        _value = value;
+        _largest = MAX(largest, 1);
+        _tint = tint;
+
+        NSTextField *label = ARLabel(name, ARRowFont(), NSColor.labelColor);
+        label.maximumNumberOfLines = 1;
+        NSTextField *count = ARLabel([NSString stringWithFormat: @"%ld", (long) value],
+            ARValueFont(), NSColor.secondaryLabelColor);
+        count.alignment = NSTextAlignmentRight;
+        [self addSubview: label];
+        [self addSubview: count];
+        [NSLayoutConstraint activateConstraints: @[
+            [self.heightAnchor constraintEqualToConstant: 38],
+            [label.leadingAnchor constraintEqualToAnchor: self.leadingAnchor
+                constant: AR_ROW_INSET],
+            [label.topAnchor constraintEqualToAnchor: self.topAnchor constant: 6],
+            [label.trailingAnchor constraintLessThanOrEqualToAnchor: count.leadingAnchor
+                constant: -12],
+            [count.trailingAnchor constraintEqualToAnchor: self.trailingAnchor
+                constant: -AR_ROW_INSET],
+            [count.firstBaselineAnchor constraintEqualToAnchor: label.firstBaselineAnchor],
+        ]];
+    }
+    return self;
+}
+
+- (void)drawRect:(NSRect)dirty {
+    // A thin bar under the name, the same colour on every row: the colour means
+    // clicks saved, not rank.
+    CGFloat available = self.bounds.size.width - AR_ROW_INSET * 2;
+    CGFloat width = fmax(3, available * _value / _largest);
+    NSRect bar = NSMakeRect(AR_ROW_INSET, 7, width, 3);
+    NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect: bar
+        xRadius: 1.5 yRadius: 1.5];
+    [[_tint colorWithAlphaComponent: 0.85] setFill];
+    [path fill];
+}
 
 @end

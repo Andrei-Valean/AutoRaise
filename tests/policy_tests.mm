@@ -15,6 +15,7 @@
 #import "Config.h"
 #import "Policy.h"
 #import "Quirks.h"
+#import "Stats.h"
 
 static int checks = 0;
 static int failures = 0;
@@ -796,6 +797,80 @@ static void testConfigWriting(void) {
     [[NSFileManager defaultManager] removeItemAtPath: path error: nil];
 }
 
+//------------------------------------------------- stats ---------------------------------------------------
+
+static void testStats(void) {
+    CASE("a fresh tally counts nothing");
+    ARStats *stats = [[ARStats alloc] initWithDictionary: nil];
+    CHECK_EQ_INT(stats.clicksSaved, 0);
+    CHECK_EQ_INT(stats.today, 0);
+    CHECK_EQ_INT([stats topApps: 5].count, 0);
+
+    CASE("raises and focuses both count as clicks saved, and are told apart");
+    [stats recordAction: ARSavedActionRaised app: @"Safari" bundleId: @"com.apple.Safari"];
+    [stats recordAction: ARSavedActionRaised app: @"Safari" bundleId: @"com.apple.Safari"];
+    [stats recordAction: ARSavedActionFocused app: @"Terminal" bundleId: @"com.apple.Terminal"];
+    CHECK_EQ_INT(stats.raises, 2);
+    CHECK_EQ_INT(stats.focuses, 1);
+    CHECK_EQ_INT(stats.clicksSaved, 3);
+    CHECK_EQ_INT(stats.today, 3);
+
+    CASE("nothing happening is not counted");
+    [stats recordAction: ARSavedActionNone app: @"Safari" bundleId: @"com.apple.Safari"];
+    CHECK_EQ_INT(stats.clicksSaved, 3);
+
+    CASE("the shortcut counts too");
+    [stats recordShortcutRaise];
+    CHECK_EQ_INT(stats.shortcutRaises, 1);
+    CHECK_EQ_INT(stats.clicksSaved, 4);
+
+    CASE("warps are counted with the distance they covered");
+    [stats recordWarpOver: 300];
+    [stats recordWarpOver: 200];
+    [stats recordWarpOver: 0];       // a warp that went nowhere is not one
+    CHECK_EQ_INT(stats.warps, 2);
+    CHECK_EQ_INT(stats.warpPixels, 500);
+
+    CASE("the top applications come back in order, biggest first");
+    NSArray<ARAppTally *> *top = [stats topApps: 5];
+    CHECK_EQ_INT(top.count, 2);
+    CHECK_EQ_STR(top.firstObject.name, @"Safari");
+    CHECK_EQ_INT(top.firstObject.count, 2);
+    CHECK_EQ_STR(top.lastObject.name, @"Terminal");
+
+    CASE("the list is cut to the length asked for");
+    CHECK_EQ_INT([stats topApps: 1].count, 1);
+
+    CASE("the daily history ends today and is as long as asked");
+    NSArray<NSNumber *> *days = [stats countsForLastDays: 14];
+    CHECK_EQ_INT(days.count, 14);
+    // Three hovers plus the shortcut raise; warps are travel, not clicks.
+    CHECK_EQ_INT(days.lastObject.integerValue, 4);
+    CHECK_EQ_INT(days.firstObject.integerValue, 0);
+
+    CASE("everything survives a round trip through the file format");
+    ARStats *restored = [[ARStats alloc] initWithDictionary: stats.dictionaryRepresentation];
+    CHECK_EQ_INT(restored.clicksSaved, stats.clicksSaved);
+    CHECK_EQ_INT(restored.raises, stats.raises);
+    CHECK_EQ_INT(restored.warps, stats.warps);
+    CHECK_EQ_INT(restored.warpPixels, stats.warpPixels);
+    CHECK_EQ_INT([restored topApps: 5].count, 2);
+    CHECK_EQ_STR([restored topApps: 5].firstObject.name, @"Safari");
+    CHECK_EQ_INT(restored.today, stats.today);
+
+    CASE("a damaged file leaves a working tally rather than a crash");
+    ARStats *damaged = [[ARStats alloc] initWithDictionary:
+        @{@"raises": @"lots", @"byDay": @[@1, @2], @"byApp": @{@"x": @"not a dictionary"}}];
+    CHECK_EQ_INT(damaged.clicksSaved, 0);
+    CHECK_EQ_INT([damaged topApps: 5].count, 0);
+
+    CASE("an app with no bundle identifier is still counted");
+    ARStats *nameless = [[ARStats alloc] initWithDictionary: nil];
+    [nameless recordAction: ARSavedActionRaised app: @"XQuartz" bundleId: nil];
+    CHECK_EQ_INT([nameless topApps: 5].count, 1);
+    CHECK_EQ_STR([nameless topApps: 5].firstObject.name, @"XQuartz");
+}
+
 int main(void) {
     @autoreleasepool {
         testMatching();
@@ -809,6 +884,7 @@ int main(void) {
         testShortcuts();
         testColors();
         testConfigWriting();
+        testStats();
 
         printf("%d checks, %d failures\n", checks, failures);
         return failures ? 1 : 0;

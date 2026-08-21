@@ -12,8 +12,9 @@ endif
 
 SOURCES := src/main.mm src/Config.mm src/FocusRing.mm src/MenuBar.mm src/Policy.mm \
            src/Quirks.mm src/Shortcut.mm src/SettingsUI.mm src/SettingsWindow.mm \
+           src/Stats.mm \
            src/WindowFinder.mm
-HEADERS := src/Config.h src/FocusRing.h src/MenuBar.h src/Policy.h src/Quirks.h \
+HEADERS := src/Config.h src/FocusRing.h src/MenuBar.h src/Policy.h src/Quirks.h src/Stats.h \
            src/SettingsUI.h src/SettingsWindow.h src/WindowFinder.h
 OBJECTS := $(patsubst src/%.mm,build/%.o,$(SOURCES))
 
@@ -58,10 +59,11 @@ test: build/policy_tests
 	@./build/policy_tests
 
 build/policy_tests: tests/policy_tests.mm src/Policy.mm src/Quirks.mm src/Config.mm \
-                    src/Shortcut.mm $(HEADERS)
+                    src/Shortcut.mm src/Stats.mm $(HEADERS)
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ tests/policy_tests.mm src/Policy.mm src/Quirks.mm src/Config.mm \
-	    src/Shortcut.mm -framework Foundation -framework CoreGraphics -framework Carbon
+	    src/Shortcut.mm src/Stats.mm \
+	    -framework Foundation -framework CoreGraphics -framework Carbon
 
 icon: AutoRaise.icns
 

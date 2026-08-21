@@ -150,6 +150,35 @@ NSTextField *ARLabel(NSString *text, NSFont *font, NSColor *color);
 @property (nonatomic, copy, nullable) void (^onChange)(NSString *_Nullable shortcut);
 @end
 
+// One headline number, the figure a page leads with.
+@interface ARHeroFigure : NSView
+- (instancetype)initWithValue:(NSString *)value caption:(NSString *)caption;
+@end
+
+// One number in a row of them, each in its own card.
+@interface ARStatTile : NSView
+- (instancetype)initWithValue:(NSString *)value label:(NSString *)label;
+@end
+
+// Counts over the last n days, one column each. A single series, so no legend:
+// the caption above it says what is plotted. Columns are capped in width, sit on
+// one baseline, have a rounded top and a square foot, and are separated by
+// surface gaps rather than outlines.
+@interface ARColumnChart : NSView
+- (instancetype)initWithCounts:(NSArray<NSNumber *> *)counts
+                       endDate:(NSDate *)endDate
+                       tint:(NSColor *)tint;
+@end
+
+// One row of a ranked list: name, a proportional bar, and the value. Every bar
+// is the same colour, because the colour means "clicks saved", not rank.
+@interface ARRankRow : NSView
+- (instancetype)initWithName:(NSString *)name
+                       value:(NSInteger)value
+                     largest:(NSInteger)largest
+                        tint:(NSColor *)tint;
+@end
+
 // The banner at the top of a pane when something needs attention.
 @interface ARNoticeView : ARFillView
 - (instancetype)initWithSymbol:(NSString *)symbol
