@@ -94,12 +94,14 @@ BOOL ARFocusRingVerbose = NO;
     ARRingView *_view;
     CGWindowID _windowId;
     NSTimer *_clipTimer;
+    ARRingStyle _effective;   // the style actually drawn, see below
 }
 
 - (instancetype)init {
     if ((self = [super init])) {
         _color = ARColorParse(nil, NULL);   // follows the accent colour
         _style = ARRingStyleDefaults();
+        _effective = _style;
 
         // A non-activating panel: it can never take the keyboard, and it never
         // becomes the window AutoRaise thinks you are hovering, because
@@ -143,9 +145,33 @@ BOOL ARFocusRingVerbose = NO;
 - (void)setStyle:(ARRingStyle)style {
     BOOL pulseChanged = style.pulseSeconds != _style.pulseSeconds;
     _style = style;
+    _effective = style;
     _view.style = style;
     _view.needsDisplay = YES;
     if (pulseChanged && _panel.isVisible) { [self startPulsing]; }
+}
+
+// A window filling its display leaves no room outside itself, and a ring drawn
+// around such a window is entirely off screen. There the ring goes inside the
+// window edge instead, whatever the setting says, because an invisible outline
+// is worse than one a couple of points further in.
+- (ARRingStyle)styleForWindowFrame:(CGRect)frame {
+    ARRingStyle style = _style;
+    if (style.insideFrame) { return style; }
+
+    CGFloat margin = ARRingMargin(style);
+    CGRect wanted = CGRectInset(frame, -margin, -margin);
+    CGRect display = CGRectZero;
+    CGFloat menuBarHeight = 0;
+    CGPoint centre = CGPointMake(CGRectGetMidX(frame), CGRectGetMidY(frame));
+    if (ARScreenAtPoint(centre, &display, &menuBarHeight) &&
+        !CGRectContainsRect(display, wanted)) {
+        style.insideFrame = YES;
+        if (ARFocusRingVerbose) {
+            NSLog(@"Window fills its display, drawing the ring inside the edge");
+        }
+    }
+    return style;
 }
 
 - (BOOL)visible { return _panel.isVisible; }
@@ -155,7 +181,7 @@ BOOL ARFocusRingVerbose = NO;
 - (NSRect)panelFrameForWindowFrame:(CGRect)frame {
     NSScreen *primary = NSScreen.screens.firstObject;
     CGFloat top = primary ? NSMaxY(primary.frame) : 0;
-    CGFloat margin = ARRingMargin(_style);
+    CGFloat margin = ARRingMargin(_effective);
     return NSMakeRect(frame.origin.x - margin,
                       top - (frame.origin.y + frame.size.height) - margin,
                       frame.size.width + margin * 2,
@@ -164,6 +190,11 @@ BOOL ARFocusRingVerbose = NO;
 
 - (void)showAroundFrame:(CGRect)frame ofWindow:(CGWindowID)windowId {
     if (frame.size.width < 1 || frame.size.height < 1) { return; }
+
+    // Settle the style first: it decides how much room the panel needs around
+    // the window, or none at all when the ring has to go inside.
+    _effective = [self styleForWindowFrame: frame];
+    _view.style = _effective;
     _view.color = _color;
     [_panel setFrame: [self panelFrameForWindowFrame: frame] display: YES];
     _view.needsDisplay = YES;
@@ -218,7 +249,7 @@ BOOL ARFocusRingVerbose = NO;
 
 - (void)startPulsing {
     [_view.layer removeAnimationForKey: @"pulse"];
-    if (_style.pulseSeconds <= 0) {
+    if (_effective.pulseSeconds <= 0) {
         _view.layer.opacity = 1.0;
         return;
     }
@@ -226,7 +257,7 @@ BOOL ARFocusRingVerbose = NO;
     pulse.fromValue = @0.45;
     pulse.toValue = @1.0;
     // One full breath: half in, half out.
-    pulse.duration = _style.pulseSeconds / 2;
+    pulse.duration = _effective.pulseSeconds / 2;
     pulse.autoreverses = YES;
     pulse.repeatCount = HUGE_VALF;
     pulse.timingFunction = [CAMediaTimingFunction

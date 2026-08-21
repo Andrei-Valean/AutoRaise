@@ -646,8 +646,11 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
 
 - (void)appActivated:(NSNotification *)notification {
     // Whatever just came forward holds the keyboard now, so an outline around
-    // anything else is a lie.
-    [self validateFocusRing];
+    // anything else is a lie. The notification names the application; asking
+    // NSWorkspace here would give the previous one, because it has not caught
+    // up yet, and that mistake hid every ring the moment it appeared.
+    NSRunningApplication *app = notification.userInfo[NSWorkspaceApplicationKey];
+    if (app) { [self hideRingUnlessOwnedBy: app.processIdentifier]; }
     if (!_config.warpMouse) { return; }
     if (_config.verbose) { NSLog(@"App activated, waiting %0.3fs", ACTIVATE_DELAY_MS / 1000.0); }
     [self performSelector: @selector(onAppActivated) withObject: nil
@@ -659,15 +662,12 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
     if (app.processIdentifier == _ringPid) { [self hideFocusRing]; }
 }
 
-// The ring means "this window has the keyboard". The moment that stops being
-// true it has to go, however the focus moved.
-- (void)validateFocusRing {
-    if (!_focusRing.visible) { return; }
-    pid_t frontmost = [[NSWorkspace sharedWorkspace] frontmostApplication].processIdentifier;
-    if (frontmost != _ringPid) {
-        if (_config.verbose) { NSLog(@"Ring outlived its focus, hiding it"); }
-        [self hideFocusRing];
-    }
+// The ring means "this window has the keyboard", so it goes as soon as the
+// keyboard belongs to some other application.
+- (void)hideRingUnlessOwnedBy:(pid_t)pid {
+    if (!_focusRing.visible || pid == _ringPid) { return; }
+    if (_config.verbose) { NSLog(@"Keyboard went to pid %d, hiding the ring", pid); }
+    [self hideFocusRing];
 }
 
 - (void)onAppActivated {
@@ -936,8 +936,6 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         _propagateMouseMoved = YES;
         return YES;
     }
-
-    [self validateFocusRing];
 
     if (!mouseMoved && !_delay.delayTicks && !_delay.raiseTimes) { return NO; }
 
