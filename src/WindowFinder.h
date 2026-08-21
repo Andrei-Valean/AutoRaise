@@ -62,6 +62,21 @@ CGWindowID ARWindowID(AXUIElementRef window);
 // The window frame in CoreGraphics coordinates.
 BOOL ARWindowFrame(AXUIElementRef window, CGRect *frame);
 
+//------------------------------------------------ dialogs -------------------------------------------------
+
+// Whether this window is the kind that has to be answered before anything else
+// can happen: an alert, a confirmation, a sheet.
+BOOL ARWindowIsDialog(AXUIElementRef window);
+
+// Its buttons, in the order the dialog lists them, with the ones Return and
+// Escape would press marked. Empty when it has none, which is how a progress
+// dialog looks.
+NSArray<ARDialogButton *> *ARDialogButtons(AXUIElementRef window);
+
+// A dialog with the keyboard in a text field is waiting for typing, not for a
+// click, and moving the pointer into it would be answering a different question.
+BOOL ARDialogWantsTyping(pid_t pid);
+
 // Frames of the ordinary windows stacked in front of the given one, in
 // CoreGraphics coordinates, front to back. AutoRaise's own windows are left
 // out. Used to clip the focus ring to the part of a window you can actually

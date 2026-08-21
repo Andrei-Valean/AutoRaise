@@ -200,6 +200,112 @@ BOOL ARWindowFrame(AXUIElementRef window, CGRect *frame) {
     return ARCopyRect(window, frame);
 }
 
+//------------------------------------------------ dialogs -------------------------------------------------
+
+// How deep to look for buttons. An alert puts them straight in the window; a
+// sheet often wraps them in a group or two. Deeper than this is a form, not a
+// confirmation.
+#define AR_BUTTON_SEARCH_DEPTH 3
+#define AR_BUTTON_SEARCH_LIMIT 60
+
+BOOL ARWindowIsDialog(AXUIElementRef window) {
+    NSString *role = ARCopyStringAttribute(window, kAXRoleAttribute);
+    if ([role isEqualToString: (__bridge NSString *) kAXSheetRole]) { return YES; }
+
+    NSString *subrole = ARCopyStringAttribute(window, kAXSubroleAttribute);
+    return [subrole isEqualToString: (__bridge NSString *) kAXDialogSubrole] ||
+           [subrole isEqualToString: (__bridge NSString *) kAXSystemDialogSubrole];
+}
+
+static BOOL ARBooleanAttribute(AXUIElementRef element, CFStringRef attribute, BOOL fallback) {
+    CFTypeRef _value = NULL;
+    if (AXUIElementCopyAttributeValue(element, attribute, &_value) != kAXErrorSuccess || !_value) {
+        return fallback;
+    }
+    BOOL value = CFGetTypeID(_value) == CFBooleanGetTypeID() ? CFBooleanGetValue((CFBooleanRef) _value)
+                                                            : fallback;
+    CFRelease(_value);
+    return value;
+}
+
+static AXUIElementRef ARCopyElementAttribute(AXUIElementRef element, CFStringRef attribute) {
+    AXUIElementRef _found = NULL;
+    AXUIElementCopyAttributeValue(element, attribute, (CFTypeRef *) &_found);
+    return _found;
+}
+
+// Depth first, so the buttons come back in the order the dialog lays them out.
+static void ARCollectButtons(AXUIElementRef element, NSMutableArray *into, int depth, int *visited) {
+    if (depth < 0 || *visited > AR_BUTTON_SEARCH_LIMIT) { return; }
+
+    CFArrayRef _children = NULL;
+    if (AXUIElementCopyAttributeValue(element, kAXChildrenAttribute,
+                                      (CFTypeRef *) &_children) != kAXErrorSuccess || !_children) {
+        return;
+    }
+    for (CFIndex i = 0; i < CFArrayGetCount(_children) && *visited <= AR_BUTTON_SEARCH_LIMIT; i++) {
+        AXUIElementRef child = (AXUIElementRef) CFArrayGetValueAtIndex(_children, i);
+        (*visited)++;
+        NSString *role = ARCopyStringAttribute(child, kAXRoleAttribute);
+        if ([role isEqualToString: (__bridge NSString *) kAXButtonRole]) {
+            ARDialogButton *button = [[ARDialogButton alloc] init];
+            button.title = ARCopyStringAttribute(child, kAXTitleAttribute);
+            button.enabled = ARBooleanAttribute(child, kAXEnabledAttribute, YES);
+            CGRect frame = CGRectZero;
+            if (!ARCopyRect(child, &frame)) { continue; }
+            button.frame = frame;
+            // Kept so the default and cancel ones can be recognised by identity
+            // rather than by title, which is localized.
+            button.element = (void *) CFRetain(child);
+            [into addObject: button];
+        } else {
+            ARCollectButtons(child, into, depth - 1, visited);
+        }
+    }
+    CFRelease(_children);
+}
+
+NSArray<ARDialogButton *> *ARDialogButtons(AXUIElementRef window) {
+    NSMutableArray<ARDialogButton *> *buttons = [NSMutableArray array];
+    int visited = 0;
+    ARCollectButtons(window, buttons, AR_BUTTON_SEARCH_DEPTH, &visited);
+
+    // The dialog itself says which button each key would press, which is the
+    // only way to know it without reading localized titles.
+    AXUIElementRef _default = ARCopyElementAttribute(window, kAXDefaultButtonAttribute);
+    AXUIElementRef _cancel = ARCopyElementAttribute(window, kAXCancelButtonAttribute);
+    for (ARDialogButton *button in buttons) {
+        AXUIElementRef element = (AXUIElementRef) button.element;
+        if (_default && CFEqual(element, _default)) { button.isDefault = YES; }
+        if (_cancel && CFEqual(element, _cancel)) { button.isCancel = YES; }
+    }
+    if (_default) { CFRelease(_default); }
+    if (_cancel) { CFRelease(_cancel); }
+
+    if (verboseLogging) {
+        for (ARDialogButton *button in buttons) {
+            NSLog(@"Dialog button \"%@\"%@%@%@", button.title,
+                  button.isDefault ? @" (default)" : @"", button.isCancel ? @" (cancel)" : @"",
+                  button.enabled ? @"" : @" (disabled)");
+        }
+    }
+    return buttons;
+}
+
+BOOL ARDialogWantsTyping(pid_t pid) {
+    AXUIElementRef _app = AXUIElementCreateApplication(pid);
+    if (!_app) { return NO; }
+    AXUIElementRef _focused = ARCopyElementAttribute(_app, kAXFocusedUIElementAttribute);
+    CFRelease(_app);
+    if (!_focused) { return NO; }
+
+    NSString *role = ARCopyStringAttribute(_focused, kAXRoleAttribute);
+    CFRelease(_focused);
+    return [role isEqualToString: (__bridge NSString *) kAXTextFieldRole] ||
+           [role isEqualToString: (__bridge NSString *) kAXTextAreaRole] ||
+           [role isEqualToString: (__bridge NSString *) kAXComboBoxRole];
+}
+
 NSArray<NSValue *> *ARWindowsInFrontOf(CGWindowID windowId) {
     NSMutableArray<NSValue *> *inFront = [NSMutableArray array];
     if (windowId == kCGNullWindowID) { return inFront; }

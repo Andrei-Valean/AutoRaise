@@ -36,7 +36,7 @@ static const ARPageInfo ARPages[ARPageCount] = {
     {"General", "switch.2", "Turn AutoRaise on, off, and out of the way."},
     {"Raise & Focus", "square.3.layers.3d.top.filled",
      "What happens when the pointer settles on a window."},
-    {"Pointer", "cursorarrow.motionlines", "Where the pointer goes when you switch windows."},
+    {"Pointer", "cursorarrow.motionlines", "Where the pointer moves on its own, and when."},
     {"Exceptions", "hand.raised.fill", "How individual applications and windows are treated."},
     {"Advanced", "slider.horizontal.3", "Timing, hit testing, and diagnostics."},
     {"Statistics", "chart.bar.fill", "What hovering has saved you."},
@@ -722,6 +722,33 @@ static NSColor *ARPageTint(ARPage page) {
 
     [self addFootnote: @"With the pointer in the window you switched to, hovering keeps working "
                        "straight away instead of raising whatever the pointer was left on top of."];
+
+    // The same bargain as above, with better odds: a dialog leaves two or three
+    // places a click can land, and it says which one each key would press.
+    NSArray *aims = @[@"off", @"default", @"cancel", @"nearest"];
+    ARPopupRow *dialog = [[ARPopupRow alloc] initWithTitle: @"Put the pointer on"
+        subtitle: @"When a dialog or a sheet appears"
+        choices: @[@"Nothing, leave it alone", @"The button Return would press",
+                   @"The button Escape would press", @"Whichever button is nearest"]
+        selected: config.dialogAim];
+    dialog.onChange = ^(NSInteger index) {
+        [weakSelf set: @"dialogPointer" to: aims[index]];
+    };
+
+    ARToggleRow *back = [[ARToggleRow alloc] initWithTitle: @"Put it back afterwards"
+        subtitle: @"Once the dialog is answered, unless you have moved the pointer since"
+        on: config.dialogPointerReturn];
+    back.onChange = ^(BOOL on) { [weakSelf setBool: @"dialogPointerReturn" to: on]; };
+    [back setRowEnabled: config.dialogAim != ARDialogAimOff];
+
+    [self addSectionTitle: @"WHEN A DIALOG APPEARS"];
+    [self addCard: @[dialog, back]];
+    [self addFootnote: @"The pointer is never left sitting on a button that destroys something. "
+                       "Aim at the button Return would press and, when that button is Delete or "
+                       "Don't Save, the pointer goes to the way out instead, or nowhere at all if "
+                       "every way out is destructive. The titles it recognises are in quirks.json, "
+                       "so another language can be added without a new version. A dialog waiting "
+                       "for you to type is left alone."];
 }
 
 - (NSString *)describeWarpTarget:(CGPoint)point {

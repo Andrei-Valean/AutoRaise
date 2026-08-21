@@ -63,7 +63,52 @@ NSArray<NSString *> *ARAppPolicyNames(void);   // for the settings window, in me
 @property (nonatomic, copy) NSArray<NSString *> *ignoreApps;
 @property (nonatomic, copy) NSArray<NSString *> *finderApps;
 @property (nonatomic, copy) NSArray<NSString *> *titlesNeedingMainWindowCheck;
+// Buttons the pointer is never parked on, however the dialog aims it. Regular
+// expressions against the button's title, so other languages can be added
+// without a release.
+@property (nonatomic, copy) NSArray<NSString *> *destructiveButtons;
 @end
+
+//------------------------------------------------------------------------------------------------
+// Where the pointer goes when a dialog appears.
+//
+// A modal dialog is the one moment on screen where the next click is almost
+// certain: there are two or three buttons and nothing else can be touched. The
+// pointer may as well be on the one you meant, the same way it lands in the
+// window you switch to.
+//------------------------------------------------------------------------------------------------
+
+typedef NS_ENUM(NSInteger, ARDialogAim) {
+    ARDialogAimOff = 0,
+    ARDialogAimDefault,    // the button Return would press: OK, Save, Yes
+    ARDialogAimCancel,     // the button Escape would press
+    ARDialogAimNearest,    // whichever is nearest, so the pointer moves least
+};
+
+BOOL ARDialogAimParse(NSString *_Nullable text, ARDialogAim *aim);
+NSString *ARDialogAimDescribe(ARDialogAim aim);
+
+@interface ARDialogButton : NSObject
+@property (nonatomic, copy, nullable) NSString *title;
+@property (nonatomic) BOOL isDefault;    // kAXDefaultButtonAttribute of the window
+@property (nonatomic) BOOL isCancel;     // kAXCancelButtonAttribute
+@property (nonatomic) BOOL enabled;
+@property (nonatomic) CGRect frame;
+// The AXUIElement it came from, retained, so the window's default and cancel
+// buttons are recognised by identity rather than by a localized title. Opaque
+// here: nothing in the decision layer touches the accessibility API.
+@property (nonatomic) void *element;
+@end
+
+typedef struct {
+    NSInteger index;             // -1: leave the pointer where it is
+    BOOL avoidedDestructive;     // the aim landed on Delete, so it moved to safety
+} ARDialogTarget;
+
+// Never parks the pointer on a destructive button, whatever the aim says: one
+// stray click on Delete costs more than every click this feature saves.
+ARDialogTarget ARChooseDialogButton(NSArray<ARDialogButton *> *buttons, ARDialogAim aim,
+                                    CGPoint pointer, ARQuirks *_Nullable quirks);
 
 typedef struct {
     BOOL needsRaise;

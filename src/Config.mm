@@ -22,6 +22,8 @@ static NSString *const kWarpY = @"warpY";
 static NSString *const kScale = @"scale";
 static NSString *const kAltTaskSwitcher = @"altTaskSwitcher";
 static NSString *const kIgnoreSpaceChanged = @"ignoreSpaceChanged";
+static NSString *const kDialogPointer = @"dialogPointer";
+static NSString *const kDialogPointerReturn = @"dialogPointerReturn";
 static NSString *const kTypingGrace = @"typingGrace";
 static NSString *const kReturnShortcut = @"returnShortcut";
 static NSString *const kInvertDisableKey = @"invertDisableKey";
@@ -76,7 +78,7 @@ static NSArray<NSString *> *ARConfigKeys(void) {
              kAltTaskSwitcher, kRequireMouseStop, kIgnoreSpaceChanged, kInvertDisableKey,
              kInvertIgnoreApps, kIgnoreApps, kIgnoreTitles, kStayFocusedBundleIds,
              kDisableKey, kMouseDelta, kLegacyActivation, kWindowServerHitTest,
-             kTypingGrace, kReturnShortcut,
+             kTypingGrace, kReturnShortcut, kDialogPointer, kDialogPointerReturn,
              kMenuBarIcon, kLiveReload, kVerbose, kEnabled, kToggleShortcut,
              kSelfRaisingApps, kFocusRing, kFocusRingColor, kFocusRingStyle, kFocusRingWidth,
              kFocusRingGlow, kFocusRingRadius, kFocusRingOpacity, kFocusRingPulse,
@@ -486,6 +488,15 @@ ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
     if (config.cursorScale < 1) { config.cursorScale = 2.0; }
 
     config.ignoreSpaceChanged = ARBool(values, kIgnoreSpaceChanged, NO);
+
+    ARDialogAim aim = ARDialogAimOff;
+    if (values[kDialogPointer] && !ARDialogAimParse(values[kDialogPointer], &aim)) {
+        [allWarnings addObject: [NSString stringWithFormat:
+            @"dialogPointer \"%@\" is not off, default, cancel or nearest",
+            values[kDialogPointer]]];
+    }
+    config.dialogAim = aim;
+    config.dialogPointerReturn = ARBool(values, kDialogPointerReturn, YES);
     config.typingGraceMillis = values[kTypingGrace] ? [values[kTypingGrace] intValue] : 700;
     if (config.typingGraceMillis < 0) { config.typingGraceMillis = 0; }
     // Read once so the table can adopt it, then never consulted again.
@@ -663,6 +674,12 @@ NSString *ARConfigTemplate(void) {
             "selfRaisingApps=focus\n"
             "ignoreSpaceChanged=false\n"
             "\n"
+            "# When a dialog appears, put the pointer on one of its buttons: off,\n"
+            "# default (the one Return would press), cancel, or nearest. The pointer is\n"
+            "# never left on a destructive button, whichever you choose.\n"
+            "dialogPointer=off\n"
+            "dialogPointerReturn=true # and put it back where it was afterwards\n"
+            "\n"
             "# Hold this key to suspend AutoRaise: control, option, command, shift, disabled.\n"
             "disableKey=control       # a ! in front holds to allow instead: !control\n"
             "\n"
@@ -717,6 +734,8 @@ NSString *ARConfigUsage(void) {
             "  -warpX <0.5> -warpY <0.5> -scale <2.0>\n"
             "  -selfRaisingApps <focus|quiet|skip>   apps that raise themselves on focus\n"
             "  -ignoreSpaceChanged <true|false>\n"
+            "  -dialogPointer <off|default|cancel|nearest>  aim at a dialog's button\n"
+            "  -dialogPointerReturn <true|false>     and put the pointer back afterwards\n"
             "  -ignoreApps \"<App1,com.example.app2, ...>\"\n"
             "  -ignoreTitles \"<Regex1,Regex2, ...>\"\n"
             "  -stayFocusedBundleIds \"<Id1,Id2, ...>\"\n"
@@ -758,6 +777,10 @@ NSString *ARConfigSummary(ARConfig *config) {
             config.warpX, config.warpY, config.cursorScale];
     }
     [out appendFormat: @"  * ignoreSpaceChanged: %s\n", config.ignoreSpaceChanged ? "true" : "false"];
+    if (config.dialogAim != ARDialogAimOff) {
+        [out appendFormat: @"  * dialogPointer: %@%@\n", ARDialogAimDescribe(config.dialogAim),
+            config.dialogPointerReturn ? @", put back afterwards" : @""];
+    }
     [out appendFormat: @"  * disableKey: %@%@\n", config.disableKeyName,
         config.invertDisableKey ? @" (inverted)" : @""];
     for (NSString *app in config.ignoreApps) {

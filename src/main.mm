@@ -29,6 +29,7 @@
 #import "AppTable.h"
 #import "Config.h"
 #import "FocusRing.h"
+#import "DialogWatcher.h"
 #import "Inspector.h"
 #import "MenuBar.h"
 #import "Policy.h"
@@ -151,7 +152,8 @@ static void window_manager_focus_window_without_raise(
 
 //------------------------------------------------controller------------------------------------------------
 
-@interface ARController : NSObject <ARMenuBarDelegate, ARSettingsDelegate>
+@interface ARController : NSObject <ARMenuBarDelegate, ARSettingsDelegate,
+                                   ARDialogWatcherDelegate>
 - (instancetype)initWithConfig:(ARConfig *)config;
 - (void)handleTappedEvent:(CGEventRef)event ofType:(CGEventType)type;
 - (void)windowDestroyed:(CGWindowID)windowId;
@@ -179,6 +181,12 @@ static void window_manager_focus_window_without_raise(
     NSTimeInterval _lastKeystroke;      // typing is intent too, of a different kind
     NSTimeInterval _lastHotkey;         // a modified keystroke: maybe a task switcher
     ARInspector *_inspector;            // nil until somebody asks to watch
+    ARDialogWatcher *_dialogs;
+    // Where the pointer was before a dialog took it, and where it was put, so
+    // it can be returned only if nobody has moved it since.
+    CGPoint _pointerBeforeDialog;
+    CGPoint _pointerOnButton;
+    BOOL _pointerIsOnAButton;
     AXUIElementRef _previousWindow;     // where the keyboard was before this
     pid_t _previousWindowPid;
 
@@ -240,6 +248,7 @@ static ARController *controller = nil;
         controller = self;
 
         [self adoptOldListsFrom: config];
+        _dialogs = [[ARDialogWatcher alloc] initWithDelegate: self];
 
         NSError *error = nil;
         NSString *quirksPath = ARQuirksUserFilePath();
@@ -317,6 +326,11 @@ static ARController *controller = nil;
     _focusRing.color = config.focusRingColor;
     _focusRing.style = config.focusRingStyle;
     if (!config.focusRing || !config.focusFirst || !config.enabled) { [self hideFocusRing]; }
+    if (config.dialogAim == ARDialogAimOff) { [_dialogs stop]; }
+    else {
+        [_dialogs watchApplication:
+            [[NSWorkspace sharedWorkspace] frontmostApplication].processIdentifier];
+    }
     _delay = ARResetDelay();
     if (timingChanged) { [self startTimers]; }
     if (warpChanged) { [self registerNotifications]; }
@@ -790,7 +804,14 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
     // NSWorkspace here would give the previous one, because it has not caught
     // up yet, and that mistake hid every ring the moment it appeared.
     NSRunningApplication *app = notification.userInfo[NSWorkspaceApplicationKey];
-    if (app) { [self hideRingUnlessOwnedBy: app.processIdentifier]; }
+    if (app) {
+        [self hideRingUnlessOwnedBy: app.processIdentifier];
+        // Dialogs are watched in whichever application is in front, since that
+        // is the one whose questions are about to be answered.
+        if (_config.dialogAim != ARDialogAimOff) {
+            [_dialogs watchApplication: app.processIdentifier];
+        }
+    }
     if (!_config.warpMouse) { return; }
     if (_config.verbose) { NSLog(@"App activated, waiting %0.3fs", ACTIVATE_DELAY_MS / 1000.0); }
     [self performSelector: @selector(onAppActivated) withObject: nil
@@ -1026,6 +1047,80 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
     if (_observerSource) {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), _observerSource, kCFRunLoopCommonModes);
     }
+}
+
+//------------------------------------------ dialogs and buttons -------------------------------------------
+
+// A dialog is the one moment on screen when the next click is nearly certain:
+// two or three buttons, and nothing else can be touched until one is pressed.
+// Warping the pointer there is the same bargain as warping it into the window
+// you switch to, with better odds.
+- (void)dialogAppeared:(AXUIElementRef)dialog pid:(pid_t)pid {
+    if (_config.dialogAim == ARDialogAimOff || !_enabled || pid == getpid()) { return; }
+
+    CGPoint pointer = [self currentMousePoint];
+    CGRect frame = CGRectZero;
+    if (ARWindowFrame(dialog, &frame) && CGRectContainsPoint(frame, pointer)) {
+        if (_config.verbose) { NSLog(@"Dialog appeared under the pointer, leaving it"); }
+        return;
+    }
+
+    // A dialog with the keyboard in a text field is asking for typing. Moving
+    // the pointer onto a button would be answering a different question.
+    if (ARDialogWantsTyping(pid)) {
+        if (_config.verbose) { NSLog(@"Dialog wants typing, leaving the pointer alone"); }
+        [self explain: @"Dialog left alone" because: @"It is waiting for typing, not a click"];
+        return;
+    }
+
+    NSArray<ARDialogButton *> *buttons = ARDialogButtons(dialog);
+    ARDialogTarget target = ARChooseDialogButton(buttons, _config.dialogAim, pointer, _quirks);
+    if (target.index < 0) {
+        NSString *why = target.avoidedDestructive
+            ? @"Every way out of it is destructive, so the pointer stays where it is"
+            : @"Nothing on it is worth putting the pointer on";
+        if (_config.verbose) { NSLog(@"Dialog: %@", why); }
+        [self explain: @"Dialog left alone" because: why];
+        return;
+    }
+
+    ARDialogButton *button = buttons[target.index];
+    CGPoint centre = CGPointMake(CGRectGetMidX(button.frame), CGRectGetMidY(button.frame));
+    _pointerBeforeDialog = pointer;
+    _pointerOnButton = centre;
+    _pointerIsOnAButton = YES;
+    CGWarpMouseCursorPosition(centre);
+    [[ARStats shared] recordWarpOver: hypot(centre.x - pointer.x, centre.y - pointer.y)];
+    // The pointer landing on a button is not a hover the user asked for.
+    _ignoreTicks = 3;
+
+    if (_config.verbose) {
+        NSLog(@"Pointer to the \"%@\" button%@", button.title,
+              target.avoidedDestructive ? @" (the aim was a destructive one)" : @"");
+    }
+    [self explain: [NSString stringWithFormat: @"Pointer on \u201c%@\u201d", button.title]
+          because: target.avoidedDestructive
+              ? @"The button it aimed at destroys something, so it went to the way out instead"
+              : @"A dialog appeared and this is the button it aims at"];
+}
+
+// Put it back, unless the pointer has been moved since, in which case wherever
+// it is now is where it was wanted.
+- (void)dialogWentAway {
+    if (!_pointerIsOnAButton) { return; }
+    _pointerIsOnAButton = NO;
+    if (!_config.dialogPointerReturn) { return; }
+
+    CGPoint pointer = [self currentMousePoint];
+    if (hypot(pointer.x - _pointerOnButton.x, pointer.y - _pointerOnButton.y) > 8) {
+        if (_config.verbose) { NSLog(@"Pointer was moved since, leaving it"); }
+        return;
+    }
+    if (_config.verbose) { NSLog(@"Dialog answered, pointer back where it was"); }
+    CGWarpMouseCursorPosition(_pointerBeforeDialog);
+    [[ARStats shared] recordWarpOver: hypot(_pointerBeforeDialog.x - pointer.x,
+                                            _pointerBeforeDialog.y - pointer.y)];
+    _ignoreTicks = 3;
 }
 
 //-------------------------------------------- the inspector -----------------------------------------------

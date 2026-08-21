@@ -823,6 +823,100 @@ static void testConfigWriting(void) {
     [[NSFileManager defaultManager] removeItemAtPath: path error: nil];
 }
 
+//------------------------------------------- dialog buttons -----------------------------------------------
+
+static ARDialogButton *makeButton(NSString *title, BOOL isDefault, BOOL isCancel, CGFloat x) {
+    ARDialogButton *button = [[ARDialogButton alloc] init];
+    button.title = title;
+    button.isDefault = isDefault;
+    button.isCancel = isCancel;
+    button.enabled = YES;
+    button.frame = CGRectMake(x, 400, 80, 24);
+    return button;
+}
+
+static void testDialogButtons(void) {
+    ARQuirks *quirks = ARQuirksDefaults();
+    CGPoint pointer = CGPointMake(100, 100);
+
+    CASE("off means the pointer is left alone");
+    NSArray * okCancel = @[makeButton(@"Cancel", NO, YES, 300),
+                           makeButton(@"OK", YES, NO, 400)];
+    CHECK_EQ_INT(ARChooseDialogButton(okCancel, ARDialogAimOff, pointer, quirks).index, -1);
+
+    CASE("the default aim finds the button Return would press");
+    CHECK_EQ_INT(ARChooseDialogButton(okCancel, ARDialogAimDefault, pointer, quirks).index, 1);
+
+    CASE("the cancel aim finds the one Escape would press");
+    CHECK_EQ_INT(ARChooseDialogButton(okCancel, ARDialogAimCancel, pointer, quirks).index, 0);
+
+    CASE("the nearest aim moves the pointer as little as possible");
+    CHECK_EQ_INT(ARChooseDialogButton(okCancel, ARDialogAimNearest, pointer, quirks).index, 0);
+    CGPoint fromTheRight = CGPointMake(900, 400);
+    CHECK_EQ_INT(ARChooseDialogButton(okCancel, ARDialogAimNearest, fromTheRight, quirks).index, 1);
+
+    CASE("a lone button is the default even when the dialog says so of none");
+    NSArray *lonely = @[makeButton(@"OK", NO, NO, 400)];
+    CHECK_EQ_INT(ARChooseDialogButton(lonely, ARDialogAimDefault, pointer, quirks).index, 0);
+
+    CASE("but two buttons and no default named means no guessing");
+    NSArray *ambiguous = @[makeButton(@"Later", NO, NO, 300), makeButton(@"Now", NO, NO, 400)];
+    CHECK_EQ_INT(ARChooseDialogButton(ambiguous, ARDialogAimDefault, pointer, quirks).index, -1);
+
+    CASE("a disabled button is not a place to put the pointer");
+    ARDialogButton *greyed = makeButton(@"OK", YES, NO, 400);
+    greyed.enabled = NO;
+    CHECK_EQ_INT(ARChooseDialogButton(@[greyed], ARDialogAimDefault, pointer, quirks).index, -1);
+    NSArray *oneUsable = @[greyed, makeButton(@"Cancel", NO, YES, 300)];
+    CHECK_EQ_INT(ARChooseDialogButton(oneUsable, ARDialogAimNearest, pointer, quirks).index, 1);
+
+    CASE("the pointer is never parked on Delete, whatever the aim says");
+    NSArray *deleting = @[makeButton(@"Cancel", NO, YES, 300),
+                          makeButton(@"Delete", YES, NO, 400)];
+    ARDialogTarget target = ARChooseDialogButton(deleting, ARDialogAimDefault, pointer, quirks);
+    CHECK_EQ_INT(target.index, 0);
+    CHECK(target.avoidedDestructive);
+    // Nearest is an aim like any other, and the rule outranks it.
+    CHECK_EQ_INT(ARChooseDialogButton(deleting, ARDialogAimNearest, fromTheRight, quirks).index, 0);
+
+    CASE("and it goes nowhere when every way out is destructive");
+    NSArray *doomed = @[makeButton(@"Erase", YES, NO, 300), makeButton(@"Delete", NO, NO, 400)];
+    ARDialogTarget nowhere = ARChooseDialogButton(doomed, ARDialogAimDefault, pointer, quirks);
+    CHECK_EQ_INT(nowhere.index, -1);
+    CHECK(nowhere.avoidedDestructive);
+
+    CASE("the cancel button wins over any other safe button");
+    NSArray *three = @[makeButton(@"Don\u2019t Save", YES, NO, 200),
+                       makeButton(@"Review", NO, NO, 300),
+                       makeButton(@"Cancel", NO, YES, 400)];
+    CHECK_EQ_INT(ARChooseDialogButton(three, ARDialogAimDefault, pointer, quirks).index, 2);
+
+    CASE("Save is not destructive, so the pointer lands on it");
+    NSArray *saving = @[makeButton(@"Cancel", NO, YES, 300), makeButton(@"Save", YES, NO, 400)];
+    ARDialogTarget onSave = ARChooseDialogButton(saving, ARDialogAimDefault, pointer, quirks);
+    CHECK_EQ_INT(onSave.index, 1);
+    CHECK(!onSave.avoidedDestructive);
+
+    CASE("a dialog with no buttons at all is left alone");
+    CHECK_EQ_INT(ARChooseDialogButton(@[], ARDialogAimDefault, pointer, quirks).index, -1);
+
+    CASE("every aim has a name that survives a round trip");
+    for (NSString *name in @[@"off", @"default", @"cancel", @"nearest"]) {
+        ARDialogAim aim = ARDialogAimNearest;
+        CHECK(ARDialogAimParse(name, &aim));
+        CHECK_EQ_STR(ARDialogAimDescribe(aim), name);
+    }
+    CHECK(!ARDialogAimParse(@"maybe", NULL));
+
+    CASE("another language is a line in quirks.json");
+    ARQuirks *romanian = ARQuirksDefaults();
+    romanian.destructiveButtons = [romanian.destructiveButtons
+        arrayByAddingObject: @"^\u0218terge"];
+    NSArray *localized = @[makeButton(@"Anula", NO, YES, 300),
+                           makeButton(@"\u0218terge", YES, NO, 400)];
+    CHECK_EQ_INT(ARChooseDialogButton(localized, ARDialogAimDefault, pointer, romanian).index, 0);
+}
+
 //------------------------------------------------ trace ---------------------------------------------------
 
 static BOOL mentions(NSArray<NSString *> *trace, NSString *fragment) {
@@ -1243,6 +1337,7 @@ int main(void) {
         testIntent();
         testAppTable();
         testTrace();
+        testDialogButtons();
 
         printf("%d checks, %d failures\n", checks, failures);
         return failures ? 1 : 0;

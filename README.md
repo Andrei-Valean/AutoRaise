@@ -26,7 +26,8 @@ The window has six pages:
 - **Raise & Focus**: whether a hovered window is raised, focused first and raised later, or only
   focused, plus the delays for each, how much pointer movement to ignore, and the outline that marks
   a window holding the keyboard without having been raised.
-- **Pointer**: mouse warping on window switch, with any switcher. Drag the pointer around a small window to say where
+- **Pointer**: where the pointer moves on its own. Warping on a window switch, with any switcher,
+  and onto a dialog's button when one appears. Drag the pointer around a small window to say where
   it should land.
 - **Exceptions**: apps and window titles to leave alone, apps that keep the focus, and the modifier
   key that suspends AutoRaise while held. "Choose Application…" fills in names for you.
@@ -65,6 +66,10 @@ comments, ordering and any settings a future version adds are left alone.
     warpX=0.5
     warpY=0.1
     scale=2.5                # briefly enlarge the cursor after warping, 1.0 disables
+
+    # When a dialog appears, put the pointer on one of its buttons.
+    dialogPointer=off        # off, default, cancel or nearest
+    dialogPointerReturn=true # and put it back where it was afterwards
 
     selfRaisingApps=focus    # focus, quiet or skip; see below
     ignoreSpaceChanged=false # do not act right after a space change
@@ -177,6 +182,40 @@ that.
 `ignoreApps` and `stayFocusedBundleIds` in the settings file are still read. `invertIgnoreApps` is
 not: the first time this version finds no `apps.json` it turns all three into lines here, and an
 inverted list becomes the `*` line.
+
+### The pointer knows where you are about to click
+
+Warping the pointer into the window you switch to works because a task switch says, roughly, where
+the next click is going. A dialog says it exactly: two or three buttons, and nothing else on screen
+can be touched until one of them is pressed.
+
+    dialogPointer=default    # the button Return would press: OK, Save, Yes
+    dialogPointer=cancel     # the one Escape would press
+    dialogPointer=nearest    # whichever is closest, so the pointer moves least
+    dialogPointer=off        # the default: leave the pointer alone
+
+Which button is which comes from the dialog itself, through the accessibility attributes that say
+what Return and Escape would do, so it never depends on reading English titles.
+
+**The pointer is never left sitting on a button that destroys something.** That rule outranks the
+setting. Aim at the button Return would press and, when a dialog makes Delete or Don't Save the
+default, the pointer goes to the way out instead; when every way out is destructive it does not move
+at all. One stray click on Delete costs more than every click this saves. What counts as destructive
+is a list of regular expressions in the `destructiveButtons` quirk, so another language is a line in
+`quirks.json` rather than a new version:
+
+    {"destructiveButtons": ["^Sterge", "^Nu salva"]}
+
+Two more rules keep it out of the way. A dialog that already has the pointer inside it is left alone,
+and so is one waiting for you to type, since a password prompt wants the keyboard rather than a
+click. With `dialogPointerReturn`, once the dialog is answered the pointer goes back where it came
+from, unless you moved it yourself in the meantime, in which case where it is now is where you wanted
+it.
+
+Sheets count as dialogs: the save-changes sheet that slides out of a title bar arrives through
+`kAXSheetCreated` rather than `kAXWindowCreated`, and both are watched. Dialogs are watched in
+whichever application is in front, and one that comes forward carrying a question already on screen
+is caught when it activates.
 
 ### Typing is intent too
 
@@ -424,6 +463,8 @@ accessibility again.
     src/WindowFinder.mm  the accessibility API and the window server
     src/Config.mm        settings, from defaults through file to arguments
     src/Quirks.mm        per app knowledge, built in and user supplied
+    src/DialogWatcher.mm notices a dialog appearing, so the pointer can meet it
+    src/Inspector.mm     the panel that says which rule decided
     src/MenuBar.mm       the status item
     src/SettingsWindow.mm  the settings window and its six pages
     src/SettingsUI.mm      the controls it is built from

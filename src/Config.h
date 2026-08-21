@@ -96,6 +96,11 @@ NSString *ARRingPlacementDescribe(ARRingPlacement placement);
 @property (nonatomic, readonly) BOOL warpMouse;
 
 @property (nonatomic) BOOL ignoreSpaceChanged;
+
+// Where the pointer goes when a dialog appears, and whether it goes back
+// afterwards. A dialog is the one moment the next click is predictable.
+@property (nonatomic) ARDialogAim dialogAim;
+@property (nonatomic) BOOL dialogPointerReturn;
 // While you are typing you are not asking to change windows. Milliseconds after
 // the last keystroke during which hovering leaves the keyboard alone.
 @property (nonatomic) int typingGraceMillis;

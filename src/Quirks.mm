@@ -12,11 +12,13 @@ static NSString *const kIgnoreTitles = @"ignoreTitles";
 static NSString *const kIgnoreApps = @"ignoreApps";
 static NSString *const kFinderApps = @"finderApps";
 static NSString *const kTitlesNeedingMainWindowCheck = @"titlesNeedingMainWindowCheck";
+static NSString *const kDestructiveButtons = @"destructiveButtons";
 static NSString *const kReplaceDefaults = @"replaceDefaults";
 
 static NSArray<NSString *> *ARQuirkKeys(void) {
     return @[kMainWindowAppsWithoutTitle, kPwaBrowsers, kAppsRaisingOnFocus,
-             kIgnoreTitles, kIgnoreApps, kFinderApps, kTitlesNeedingMainWindowCheck];
+             kIgnoreTitles, kIgnoreApps, kFinderApps, kTitlesNeedingMainWindowCheck,
+             kDestructiveButtons];
 }
 
 ARQuirks *ARQuirksDefaults(void) {
@@ -49,6 +51,14 @@ ARQuirks *ARQuirksDefaults(void) {
     // An empty title, or Mail's search window, mean "check whether this really
     // is a main window" rather than "skip".
     quirks.titlesNeedingMainWindowCheck = @[@"", @"Untitled"];
+
+    // Buttons the pointer is never left sitting on. Regular expressions against
+    // the title, so another language is a line in quirks.json rather than a
+    // release. "Don.t" covers both kinds of apostrophe.
+    quirks.destructiveButtons = @[@"^Delete", @"^Don.t Save", @"^Discard", @"^Erase",
+                                  @"^Remove", @"^Move to (Trash|Bin)", @"^Replace",
+                                  @"^Overwrite", @"^Reset", @"^Empty (Trash|Bin)",
+                                  @"Without Saving", @"^Revert"];
 
     return quirks;
 }

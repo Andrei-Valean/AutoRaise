@@ -218,6 +218,109 @@ NSString *ARDecisionSummary(ARRaiseQuery *query, ARRaiseDecision decision, BOOL 
     return @"Raise it";
 }
 
+//------------------------------------------- dialog buttons ------------------------------------------------
+
+@implementation ARDialogButton
+- (void)dealloc {
+    if (_element) { CFRelease(_element); }
+}
+@end
+
+BOOL ARDialogAimParse(NSString *text, ARDialogAim *aim) {
+    static NSDictionary<NSString *, NSNumber *> *names = nil;
+    if (!names) {
+        names = @{@"off": @(ARDialogAimOff), @"": @(ARDialogAimOff), @"false": @(ARDialogAimOff),
+                  @"default": @(ARDialogAimDefault), @"true": @(ARDialogAimDefault),
+                  @"cancel": @(ARDialogAimCancel),
+                  @"nearest": @(ARDialogAimNearest)};
+    }
+    if (![text isKindOfClass: [NSString class]]) { return NO; }
+    NSNumber *found = names[[[text stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceCharacterSet]] lowercaseString]];
+    if (!found) { return NO; }
+    if (aim) { *aim = (ARDialogAim) found.integerValue; }
+    return YES;
+}
+
+NSString *ARDialogAimDescribe(ARDialogAim aim) {
+    switch (aim) {
+        case ARDialogAimDefault: return @"default";
+        case ARDialogAimCancel: return @"cancel";
+        case ARDialogAimNearest: return @"nearest";
+        default: return @"off";
+    }
+}
+
+static CGFloat ARDistanceToButton(ARDialogButton *button, CGPoint from) {
+    CGPoint centre = CGPointMake(CGRectGetMidX(button.frame), CGRectGetMidY(button.frame));
+    return hypot(centre.x - from.x, centre.y - from.y);
+}
+
+static NSInteger ARNearestButton(NSArray<ARDialogButton *> *buttons, CGPoint pointer,
+                                 NSInteger except) {
+    NSInteger best = -1;
+    CGFloat shortest = 0;
+    for (NSUInteger i = 0; i < buttons.count; i++) {
+        if ((NSInteger) i == except || !buttons[i].enabled) { continue; }
+        CGFloat distance = ARDistanceToButton(buttons[i], pointer);
+        if (best < 0 || distance < shortest) { best = i; shortest = distance; }
+    }
+    return best;
+}
+
+static BOOL ARButtonIsDestructive(ARDialogButton *button, ARQuirks *quirks) {
+    return ARTitleMatches(button.title, nil, quirks.destructiveButtons);
+}
+
+ARDialogTarget ARChooseDialogButton(NSArray<ARDialogButton *> *buttons, ARDialogAim aim,
+                                    CGPoint pointer, ARQuirks *quirks) {
+    ARDialogTarget target = {-1, NO};
+    if (aim == ARDialogAimOff || !buttons.count) { return target; }
+
+    NSInteger chosen = -1;
+    switch (aim) {
+        case ARDialogAimDefault:
+            for (NSUInteger i = 0; i < buttons.count; i++) {
+                if (buttons[i].isDefault && buttons[i].enabled) { chosen = i; break; }
+            }
+            // A dialog that names no default button and offers one way out has
+            // only one place a click can land.
+            if (chosen < 0 && buttons.count == 1 && buttons[0].enabled) { chosen = 0; }
+            break;
+        case ARDialogAimCancel:
+            for (NSUInteger i = 0; i < buttons.count; i++) {
+                if (buttons[i].isCancel && buttons[i].enabled) { chosen = i; break; }
+            }
+            break;
+        case ARDialogAimNearest:
+            chosen = ARNearestButton(buttons, pointer, -1);
+            break;
+        default:
+            break;
+    }
+    if (chosen < 0) { return target; }
+
+    // The one rule that overrides the setting. Parking the pointer over Delete
+    // turns a stray click into lost work, so aim at the way out instead, and at
+    // nothing at all when every way out is destructive.
+    if (ARButtonIsDestructive(buttons[chosen], quirks)) {
+        target.avoidedDestructive = YES;
+        NSInteger safe = -1;
+        for (NSUInteger i = 0; i < buttons.count; i++) {
+            if ((NSInteger) i == chosen || !buttons[i].enabled) { continue; }
+            if (ARButtonIsDestructive(buttons[i], quirks)) { continue; }
+            // The cancel button is the safest of the safe ones.
+            if (buttons[i].isCancel) { safe = i; break; }
+            if (safe < 0) { safe = i; }
+        }
+        target.index = safe;
+        return target;
+    }
+
+    target.index = chosen;
+    return target;
+}
+
 ARCorrectedPoint ARCorrectMousePoint(CGPoint raw, CGPoint delta,
                                      BOOL hasScreen, CGRect screenFrame, CGFloat menuBarHeight) {
     ARCorrectedPoint result = {raw, ARCorrectionNone};
