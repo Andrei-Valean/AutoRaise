@@ -1,0 +1,14 @@
+{
+  "//": "Copy this to ~/.config/AutoRaise/quirks.json and edit it. Entries are",
+  "//2": "added to the built-in lists; set \"replaceDefaults\": true to start from",
+  "//3": "scratch instead. Run 'AutoRaise -dumpQuirks' to print the built-ins.",
+  "//4": "App entries match a localized name or a bundle identifier.",
+
+  "mainWindowAppsWithoutTitle": [],
+  "pwaBrowsers": [],
+  "appsRaisingOnFocus": [],
+  "ignoreTitles": [],
+  "ignoreApps": [],
+  "finderApps": [],
+  "titlesNeedingMainWindowCheck": []
+}
