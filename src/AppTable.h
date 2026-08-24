@@ -30,7 +30,6 @@ NS_ASSUME_NONNULL_BEGIN
 // What AutoRaise noticed about an application by watching it.
 typedef struct {
     BOOL raisesItself;              // came forward the moment it was focused
-    BOOL raisesOnActivate;          // came forward even when focused quietly
     BOOL needsLegacyActivation;     // ignored the modern way of being activated
 } ARAppTraits;
 
@@ -61,9 +60,6 @@ typedef struct {
 // Written down the first time it is seen, and only then, so the file does not
 // churn and the log says it once.
 - (BOOL)noteRaisesItself:(ARWindow *)window;
-// The quiet treatment was applied and the window rose anyway: this application
-// raises itself on mere activation, and the only treatment left is skipping it.
-- (BOOL)noteRaisesOnActivate:(ARWindow *)window;
 - (BOOL)noteNeedsLegacyActivation:(ARWindow *)window;
 
 - (void)setPolicy:(ARAppPolicy)policy for:(NSString *)match;
