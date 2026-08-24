@@ -179,6 +179,7 @@ static void window_manager_focus_window_without_raise(
     BOOL _propagateMouseMoved;
     CGEventFlags _flags;
     NSTimeInterval _lastKeystroke;      // typing is intent too, of a different kind
+    NSTimeInterval _lastClick;          // a click raises; the learners must know
     NSTimeInterval _lastHotkey;         // a modified keystroke: maybe a task switcher
     ARInspector *_inspector;            // nil until somebody asks to watch
     ARDialogWatcher *_dialogs;
@@ -559,7 +560,11 @@ static CGEventRef ARTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
 
     if (type == kCGEventLeftMouseDown || type == kCGEventRightMouseDown) {
         // A click means the user has taken over: whatever they clicked is the
-        // window they meant, so the ring has nothing left to say.
+        // window they meant, so the ring has nothing left to say. The learners
+        // also need the moment: a click raises the clicked window, and a
+        // learner that cannot tell that raise from the application's own work
+        // writes raisesItself on half the machine.
+        _lastClick = [NSDate timeIntervalSinceReferenceDate];
         [self hideFocusRing];
         return;
     }
@@ -657,17 +662,42 @@ static BOOL ARShortcutMatches(NSString *configured, CGEventRef event) {
 }
 
 // A window that was not on top before, and is on top a moment later, brought
-// itself forward: nothing here asked for that.
+// itself forward: nothing here asked for that. Unless the user clicked in the
+// meantime, because a click raises the clicked window, and blaming the
+// application for the user's own click is how the whole table ended up saying
+// raisesItself.
 - (void)checkWhetherItRaisedItself:(ARWindow *)window wasOnTop:(CGWindowID)wasOnTop {
     ARWindow *snapshot = window;
     CGWindowID expected = wasOnTop;
+    NSTimeInterval actedAt = [NSDate timeIntervalSinceReferenceDate];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 250 * NSEC_PER_MSEC),
                    dispatch_get_main_queue(), ^{
+        if (self->_lastClick > actedAt) { return; }
         if (ARTopmostWindowId() != snapshot.windowId) { return; }
         if (expected == snapshot.windowId) { return; }
         if ([[ARAppTable shared] noteRaisesItself: snapshot]) {
             NSLog(@"%@ brings itself to the front when focused; it will be focused quietly "
                    "from now on", snapshot.appName ?: snapshot.bundleId);
+        }
+    });
+}
+
+// The quiet treatment posted no window events at all, so if the window is on
+// top a moment later, the application raised it on mere activation, and even
+// the quiet treatment cannot hold it. Slack does this. Remembered, so the next
+// hover leaves it alone instead of raising it against the setting.
+- (void)checkWhetherQuietHeld:(ARWindow *)window wasOnTop:(CGWindowID)wasOnTop {
+    ARWindow *snapshot = window;
+    CGWindowID expected = wasOnTop;
+    NSTimeInterval actedAt = [NSDate timeIntervalSinceReferenceDate];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 250 * NSEC_PER_MSEC),
+                   dispatch_get_main_queue(), ^{
+        if (self->_lastClick > actedAt) { return; }
+        if (ARTopmostWindowId() != snapshot.windowId) { return; }
+        if (expected == snapshot.windowId) { return; }
+        if ([[ARAppTable shared] noteRaisesOnActivate: snapshot]) {
+            NSLog(@"%@ comes forward even when it is focused quietly; hovering will leave "
+                   "it alone from now on", snapshot.appName ?: snapshot.bundleId);
         }
     });
 }
@@ -1454,8 +1484,8 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         // Applications that bring themselves to the front when focused get one
         // of three treatments, see selfRaisingApps.
         BOOL makeKeyWindow = YES;
-        BOOL raisesItself = decision.appRaisesOnFocus ||
-                            [[ARAppTable shared] traitsFor: mouse].raisesItself;
+        ARAppTraits traits = [[ARAppTable shared] traitsFor: mouse];
+        BOOL raisesItself = decision.appRaisesOnFocus || traits.raisesItself;
         if (raisesItself) {
             switch (_config.selfRaisingApps) {
                 case ARSelfRaisingSkip:
@@ -1464,6 +1494,17 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
                     }
                     return ARSavedActionNone;
                 case ARSelfRaisingQuiet:
+                    // Slack and its kind raise on mere activation: no events
+                    // are posted to them at all and the window still comes
+                    // forward. Once that is on record, quiet means skip,
+                    // because the alternative is raising against the setting.
+                    if (traits.raisesOnActivate) {
+                        if (_config.verbose) {
+                            NSLog(@"%@ comes forward even when focused quietly, "
+                                   "leaving it alone", mouse.appName);
+                        }
+                        return ARSavedActionNone;
+                    }
                     makeKeyWindow = NO;
                     if (_config.verbose) {
                         NSLog(@"%@ raises itself when focused, focusing it quietly",
@@ -1476,12 +1517,15 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         }
         // Watch what it does with the focus: an application that comes forward
         // by itself is worth remembering, so it can be focused quietly next
-        // time instead of surprising anybody twice.
-        CGWindowID wasOnTop = makeKeyWindow ? ARTopmostWindowId() : kCGNullWindowID;
+        // time instead of surprising anybody twice. A quiet act is watched
+        // too, because an application that rises with no events posted to it
+        // is beyond even the quiet treatment.
+        CGWindowID wasOnTop = ARTopmostWindowId();
         window_manager_focus_window_without_raise(&mouseWindowPsn, mouse.windowId,
             _focusedWindowPsn, focused.windowId, makeKeyWindow, _config.verbose);
-        if (makeKeyWindow && wasOnTop != kCGNullWindowID && wasOnTop != mouse.windowId) {
-            [self checkWhetherItRaisedItself: mouse wasOnTop: wasOnTop];
+        if (wasOnTop != kCGNullWindowID && wasOnTop != mouse.windowId) {
+            if (makeKeyWindow) { [self checkWhetherItRaisedItself: mouse wasOnTop: wasOnTop]; }
+            else { [self checkWhetherQuietHeld: mouse wasOnTop: wasOnTop]; }
         }
 
         [self noteFocusMovedTo: _mouseWindow pid: mouse.pid];

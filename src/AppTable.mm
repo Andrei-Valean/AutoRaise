@@ -9,6 +9,7 @@ static NSString *const kMatch = @"app";
 static NSString *const kPolicy = @"policy";
 static NSString *const kLearned = @"learned";
 static NSString *const kRaisesItself = @"raisesItself";
+static NSString *const kRaisesOnActivate = @"raisesOnActivate";
 static NSString *const kNeedsLegacyActivation = @"needsLegacyActivation";
 
 @implementation ARAppRule
@@ -52,6 +53,7 @@ static NSString *const kNeedsLegacyActivation = @"needsLegacyActivation";
         rule.policy = policy;
         rule.learned = [entry[kLearned] boolValue];
         rule.traits = (ARAppTraits) {[entry[kRaisesItself] boolValue],
+                                     [entry[kRaisesOnActivate] boolValue],
                                      [entry[kNeedsLegacyActivation] boolValue]};
         [rules addObject: rule];
     }
@@ -104,7 +106,7 @@ static NSString *const kNeedsLegacyActivation = @"needsLegacyActivation";
 // Traits belong to one application, never to the catch-all.
 - (ARAppTraits)traitsFor:(ARWindow *)window {
     ARAppRule *rule = [self exactRuleFor: window];
-    return rule ? rule.traits : (ARAppTraits) {NO, NO};
+    return rule ? rule.traits : (ARAppTraits) {NO, NO, NO};
 }
 
 - (ARAppRule *)ruleForWriting:(ARWindow *)window {
@@ -127,6 +129,18 @@ static NSString *const kNeedsLegacyActivation = @"needsLegacyActivation";
     if (!rule || rule.traits.raisesItself) { return NO; }
     ARAppTraits traits = rule.traits;
     traits.raisesItself = YES;
+    rule.traits = traits;
+    _dirty = YES;
+    [self flush];
+    return YES;
+}
+
+- (BOOL)noteRaisesOnActivate:(ARWindow *)window {
+    ARAppRule *rule = [self ruleForWriting: window];
+    if (!rule || rule.traits.raisesOnActivate) { return NO; }
+    ARAppTraits traits = rule.traits;
+    traits.raisesItself = YES;
+    traits.raisesOnActivate = YES;
     rule.traits = traits;
     _dirty = YES;
     [self flush];
@@ -226,6 +240,7 @@ static NSString *const kNeedsLegacyActivation = @"needsLegacyActivation";
                                         kPolicy: ARAppPolicyDescribe(rule.policy)} mutableCopy];
         if (rule.learned) { entry[kLearned] = @YES; }
         if (rule.traits.raisesItself) { entry[kRaisesItself] = @YES; }
+        if (rule.traits.raisesOnActivate) { entry[kRaisesOnActivate] = @YES; }
         if (rule.traits.needsLegacyActivation) { entry[kNeedsLegacyActivation] = @YES; }
         [out addObject: entry];
     }
