@@ -51,6 +51,7 @@ static NSString *const kFocusRingFalloff = @"focusRingFalloff";
 static NSString *const kRaiseShortcut = @"raiseShortcut";
 static NSString *const kEnabled = @"enabled";
 static NSString *const kToggleShortcut = @"toggleShortcut";
+static NSString *const kPinShortcut = @"pinShortcut";
 static NSString *const kConfig = @"config";
 
 // Settings that no longer do anything on their own: they are translated into the
@@ -83,7 +84,7 @@ static NSArray<NSString *> *ARConfigKeys(void) {
              kSelfRaisingApps, kFocusRing, kFocusRingColor, kFocusRingStyle, kFocusRingWidth,
              kFocusRingGlow, kFocusRingRadius, kFocusRingOpacity, kFocusRingPulse,
              kFocusRingSpread, kFocusRingFalloff,
-             kRaiseShortcut, kConfig];
+             kRaiseShortcut, kPinShortcut, kConfig];
 }
 
 @implementation ARConfig
@@ -508,7 +509,7 @@ ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
     config.verbose = ARBool(values, kVerbose, NO);
     config.enabled = ARBool(values, kEnabled, YES);
 
-    for (NSString *key in @[kToggleShortcut, kRaiseShortcut, kReturnShortcut]) {
+    for (NSString *key in @[kToggleShortcut, kRaiseShortcut, kReturnShortcut, kPinShortcut]) {
         NSString *shortcut = values[key];
         if (!shortcut.length || [shortcut isEqualToString: @"none"]) { continue; }
         ARShortcut parsed = ARShortcutParse(shortcut);
@@ -521,6 +522,8 @@ ARConfig *ARConfigFromValues(NSDictionary<NSString *, NSString *> *values,
             config.toggleShortcut = ARShortcutDescribe(parsed);
         } else if ([key isEqualToString: kRaiseShortcut]) {
             config.raiseShortcut = ARShortcutDescribe(parsed);
+        } else if ([key isEqualToString: kPinShortcut]) {
+            config.pinShortcut = ARShortcutDescribe(parsed);
         } else {
             config.returnShortcut = ARShortcutDescribe(parsed);
         }
@@ -723,7 +726,10 @@ NSString *ARConfigTemplate(void) {
             "# Shortcuts, for example control-option-J. Leave out for none.\n"
             "#toggleShortcut=none\n"
             "#raiseShortcut=none\n"
-            "#returnShortcut=none     # back to the window you came from\n";
+            "#returnShortcut=none     # back to the window you came from\n"
+            "# Keep the window under the pointer above everything; again to let go.\n"
+            "# Needs the Screen Recording permission.\n"
+            "#pinShortcut=none\n";
 }
 
 NSString *ARConfigUsage(void) {
@@ -753,6 +759,7 @@ NSString *ARConfigUsage(void) {
             "  -toggleShortcut <control-option-J>    pause and resume from anywhere\n"
             "  -raiseShortcut <control-option-K>     raise the outlined window\n"
             "  -returnShortcut <control-option-B>    back to the previous window\n"
+            "  -pinShortcut <control-option-P>       keep the window under the pointer on top\n"
             "  -typingGrace <700>                    ms after a keystroke to leave focus alone\n"
             "  -verbose <true|false>\n"
             "  -config <path>                        use this file instead of the default\n"

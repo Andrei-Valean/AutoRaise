@@ -395,7 +395,20 @@ static NSColor *ARPageTint(ARPage page) {
     ARRow *shortcut = [[ARRow alloc] initWithTitle: @"Shortcut to pause and resume"
         subtitle: @"Works in any app. Press escape to cancel, delete to clear."
         accessory: field];
-    [self addCard: @[shortcut]];
+
+    ARShortcutField *pinField = [[ARShortcutField alloc] initWithFrame: NSZeroRect];
+    pinField.shortcut = config.pinShortcut;
+    pinField.onChange = ^(NSString *shortcut) {
+        [weakSelf set: @"pinShortcut" to: shortcut];
+    };
+    ARRow *pin = [[ARRow alloc] initWithTitle: @"Keep a window on top"
+        subtitle: @"Pins the window under the pointer. Press again over it to let go."
+        accessory: pinField];
+    [self addCard: @[shortcut, pin]];
+    [self addFootnote: @"macOS does not let one app lift another app's window, so AutoRaise "
+                       "shows a live copy of a pinned window whenever something covers it, which "
+                       "needs the Screen Recording permission. Hovering the copy focuses the "
+                       "window, clicking it brings the window forward, right-clicking unpins it."];
 }
 
 //---------------------------------------------- raise & focus ---------------------------------------------

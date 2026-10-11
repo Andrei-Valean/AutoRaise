@@ -644,12 +644,13 @@ static void testColors(void) {
     CHECK(!config.focusRingColor.followsAccent);
     CHECK_EQ_INT(config.warnings.count, 0);
 
-    CASE("the outline is on by default and both shortcuts start empty");
+    CASE("the outline is on by default and the shortcuts start empty");
     config = ARConfigFromValues(@{}, nil);
     CHECK(config.focusRing);
     CHECK(config.focusRingColor.followsAccent);
     CHECK(config.toggleShortcut == nil);
     CHECK(config.raiseShortcut == nil);
+    CHECK(config.pinShortcut == nil);
 
     CASE("the outline style has usable defaults");
     ARRingStyle style = ARRingStyleDefaults();
@@ -712,13 +713,20 @@ static void testColors(void) {
     CHECK_EQ_INT(ARConfigFromValues(@{@"focusRingPulse": @"0"}, nil).focusRingStyle.pulseSeconds, 0);
     CHECK(ARConfigFromValues(@{@"focusRingPulse": @"0.01"}, nil).focusRingStyle.pulseSeconds >= 0.2);
 
-    CASE("the three shortcuts are kept apart");
+    CASE("the four shortcuts are kept apart");
     config = ARConfigFromValues(@{@"toggleShortcut": @"control-option-J",
                                   @"raiseShortcut": @"control-option-K",
-                                  @"returnShortcut": @"control-option-B"}, nil);
+                                  @"returnShortcut": @"control-option-B",
+                                  @"pinShortcut": @"control-option-P"}, nil);
     CHECK_EQ_STR(config.toggleShortcut, @"control-option-J");
     CHECK_EQ_STR(config.raiseShortcut, @"control-option-K");
     CHECK_EQ_STR(config.returnShortcut, @"control-option-B");
+    CHECK_EQ_STR(config.pinShortcut, @"control-option-P");
+
+    CASE("a pin shortcut that is not one is a warning, not a pin");
+    config = ARConfigFromValues(@{@"pinShortcut": @"P"}, nil);
+    CHECK(config.pinShortcut == nil);
+    CHECK_EQ_INT(config.warnings.count, 1);
 
     CASE("typing holds the keyboard for a moment by default");
     CHECK_EQ_INT(ARConfigFromValues(@{}, nil).typingGraceMillis, 700);

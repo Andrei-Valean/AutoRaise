@@ -127,6 +127,8 @@ NSString *ARRingPlacementDescribe(ARRingPlacement placement);
 @property (nonatomic, copy, nullable) NSString *raiseShortcut;
 // Goes back to the window the keyboard was on before this one.
 @property (nonatomic, copy, nullable) NSString *returnShortcut;
+// Keeps the window under the pointer above everything, or lets go of it.
+@property (nonatomic, copy, nullable) NSString *pinShortcut;
 
 // The outline drawn around a window that has the keyboard but was not raised.
 @property (nonatomic) BOOL focusRing;
