@@ -37,6 +37,7 @@
 #import "Stats.h"
 #import "SettingsWindow.h"
 #import "WindowFinder.h"
+#import "WindowPin.h"
 
 #define AUTORAISE_VERSION "6.0"
 
@@ -153,7 +154,7 @@ static void window_manager_focus_window_without_raise(
 //------------------------------------------------controller------------------------------------------------
 
 @interface ARController : NSObject <ARMenuBarDelegate, ARSettingsDelegate,
-                                   ARDialogWatcherDelegate>
+                                   ARDialogWatcherDelegate, ARWindowPinsDelegate>
 - (instancetype)initWithConfig:(ARConfig *)config;
 - (void)handleTappedEvent:(CGEventRef)event ofType:(CGEventType)type;
 - (void)windowDestroyed:(CGWindowID)windowId;
@@ -168,6 +169,7 @@ static void window_manager_focus_window_without_raise(
     ARMenuBar *_menuBar;
     ARSettingsWindowController *_settingsWindow;
     ARFocusRing *_focusRing;
+    ARWindowPins *_pins;
     BOOL _enabled;
 
     // Mouse tracking. _point is fed by the event tap, so a still cursor needs no
@@ -261,6 +263,8 @@ static ARController *controller = nil;
         _focusRing = [[ARFocusRing alloc] init];
         _focusRing.color = _config.focusRingColor;
         _focusRing.style = _config.focusRingStyle;
+        ARWindowPinVerbose = _config.verbose;
+        _pins = [[ARWindowPins alloc] initWithDelegate: self];
         if (ARCursorScalingAvailable()) {
             CGSGetCursorScale(CGSMainConnectionID(), &_systemCursorScale);
         }
@@ -281,6 +285,7 @@ static ARController *controller = nil;
     [[ARStats shared] flush: YES];
     [self rememberPreviousWindow: NULL pid: 0];
     [self hideFocusRing];
+    [_pins unpinAll];
     [self restoreCursorScale];
     [_menuBar remove];
     _menuBar = nil;
@@ -321,6 +326,7 @@ static ARController *controller = nil;
 
     ARWindowFinderSetVerbose(config.verbose);
     ARFocusRingVerbose = config.verbose;
+    ARWindowPinVerbose = config.verbose;
     _enabled = config.enabled;
     _intent.tuning = config.tuning;
     _focusRing.color = config.focusRingColor;
@@ -561,6 +567,8 @@ static CGEventRef ARTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
         // A click means the user has taken over: whatever they clicked is the
         // window they meant, so the ring has nothing left to say.
         [self hideFocusRing];
+        // And it may have come forward over a pinned window.
+        [_pins stackingMayHaveChanged];
         return;
     }
 
@@ -630,7 +638,61 @@ static BOOL ARShortcutMatches(NSString *configured, CGEventRef event) {
         [self returnToPreviousWindow];
         return YES;
     }
+    if (ARShortcutMatches(_config.pinShortcut, event)) {
+        [self togglePinUnderPointer];
+        return YES;
+    }
     return NO;
+}
+
+//------------------------------------------------ pinning -------------------------------------------------
+
+// Keeps the window under the pointer above everything else, or lets go of it.
+// Pinning is not hovering, so it works while AutoRaise is paused too.
+- (void)togglePinUnderPointer {
+    CGPoint point = [self currentMousePoint];
+    // Over a copy, the window it stands for is the one meant, not whatever the
+    // copy is covering.
+    ARPinnedWindow *pin = [_pins pinShowingCopyAt: point];
+    AXUIElementRef window = pin ? (AXUIElementRef) CFRetain(pin.window)
+                                : ARCopyWindowAtPoint(point, _config.windowServerHitTest);
+    if (!window) {
+        NSLog(@"Nothing to pin: no window under the pointer");
+        [self explain: @"Nothing to pin" because: @"No window under the pointer"];
+        return;
+    }
+    NSString *outcome = [_pins togglePinOf: window];
+    CFRelease(window);
+    NSLog(@"%@", outcome);
+    [self explain: @"Pin" because: outcome];
+    [_menuBar refresh];
+}
+
+// The copy is a picture, so a click on it cannot reach the window it shows.
+// The click brings the real window forward instead, which is the one thing a
+// click on a background window does anyway; the copy steps aside once the
+// window is no longer covered.
+- (void)pinnedWindowWasClicked:(ARPinnedWindow *)pin {
+    if (_config.verbose) { NSLog(@"Copy of %@ clicked, bringing it forward", pin.name); }
+    [self raiseAndActivate: pin.window pid: pin.pid];
+}
+
+- (NSArray<NSString *> *)pinnedWindowNames {
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    for (ARPinnedWindow *pin in _pins.pins) { [names addObject: pin.name]; }
+    return names;
+}
+
+- (void)unpinWindowAtIndex:(NSUInteger)index {
+    NSArray<ARPinnedWindow *> *pins = _pins.pins;
+    if (index >= pins.count) { return; }
+    NSLog(@"Unpinned %@", pins[index].name);
+    [_pins unpin: pins[index]];
+}
+
+- (void)unpinAllWindows {
+    NSLog(@"Unpinned every window");
+    [_pins unpinAll];
 }
 
 // Following the pointer costs you the idea of where you just were. This gives it
@@ -720,14 +782,22 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
             }
         }
     }
-    [_focusRing showAroundFrame: frame ofWindow: ARWindowID(window)];
+    [_focusRing showAroundFrame: frame ofWindow: [self ringStackingFor: window]];
 }
 
 - (void)followRingedWindow {
     CGRect frame = CGRectZero;
     if (_ringWindow && _focusRing.visible && ARWindowFrame(_ringWindow, &frame)) {
-        [_focusRing showAroundFrame: frame ofWindow: ARWindowID(_ringWindow)];
+        [_focusRing showAroundFrame: frame ofWindow: [self ringStackingFor: _ringWindow]];
     }
+}
+
+// The window the ring sits just above. A pinned window whose copy is showing
+// is covered for real but not to the eye, so its ring floats above the copy
+// rather than being clipped to the window's hidden original.
+- (CGWindowID)ringStackingFor:(AXUIElementRef)window {
+    CGWindowID windowId = ARWindowID(window);
+    return [_pins isShowingCopyOf: windowId] ? kCGNullWindowID : windowId;
 }
 
 - (void)stopFollowingRingedWindow {
@@ -780,6 +850,7 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
     [_intent reset];
     // The outlined window may not even be on this desktop.
     [self hideFocusRing];
+    [_pins stackingMayHaveChanged];
     _spaceHasChanged = YES;
     _havePoint = NO;
     // Deliberately stale: the first evaluation after a space change sees a move
@@ -804,6 +875,8 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
     // NSWorkspace here would give the previous one, because it has not caught
     // up yet, and that mistake hid every ring the moment it appeared.
     NSRunningApplication *app = notification.userInfo[NSWorkspaceApplicationKey];
+    // Its windows come forward, possibly over a pinned one.
+    [_pins stackingMayHaveChanged];
     if (app) {
         [self hideRingUnlessOwnedBy: app.processIdentifier];
         // Dialogs are watched in whichever application is in front, since that
@@ -821,6 +894,7 @@ static void ARRingObserverCallback(AXObserverRef observer, AXUIElementRef elemen
 - (void)applicationHidden:(NSNotification *)notification {
     NSRunningApplication *app = notification.userInfo[NSWorkspaceApplicationKey];
     if (app.processIdentifier == _ringPid) { [self hideFocusRing]; }
+    [_pins stackingMayHaveChanged];
 }
 
 // The ring means "this window has the keyboard", so it goes as soon as the
@@ -1304,7 +1378,11 @@ static void ARObserverCallback(AXObserverRef observer, AXUIElementRef element,
         return NO;
     }
 
-    AXUIElementRef _mouseWindow = ARCopyWindowAtPoint(mousePoint, _config.windowServerHitTest);
+    // A pinned window's copy belongs to AutoRaise, so the hit test would look
+    // underneath it; hovering the copy means hovering the window it shows.
+    ARPinnedWindow *pin = [_pins pinShowingCopyAt: mousePoint];
+    AXUIElementRef _mouseWindow = pin ? (AXUIElementRef) CFRetain(pin.window)
+                                      : ARCopyWindowAtPoint(mousePoint, _config.windowServerHitTest);
     if (!_mouseWindow) {
         [self explain: @"Nothing to do" because: @"No window under the pointer: the desktop, "
                                                  "the Dock or the menu bar"];

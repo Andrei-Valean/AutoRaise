@@ -20,16 +20,17 @@ override CXXFLAGS += -O2 -Wall -fobjc-arc -D"NS_FORMAT_ARGUMENT(A)=" -Isrc \
 # launch at all.
 FRAMEWORKS := -framework AppKit -framework ServiceManagement -framework QuartzCore \
               -framework UniformTypeIdentifiers \
+              -framework ScreenCaptureKit -framework CoreMedia -framework CoreVideo \
               -F /System/Library/PrivateFrameworks -weak_framework SkyLight
 
 SOURCES := src/main.mm src/AppTable.mm src/Config.mm src/DialogWatcher.mm src/FocusRing.mm src/Inspector.mm src/MenuBar.mm \
            src/Policy.mm \
            src/Quirks.mm src/Shortcut.mm src/SettingsUI.mm src/SettingsWindow.mm \
            src/Stats.mm \
-           src/WindowFinder.mm
+           src/WindowFinder.mm src/WindowPin.mm
 HEADERS := src/AppTable.h src/Config.h src/DialogWatcher.h src/FocusRing.h src/Inspector.h src/MenuBar.h src/Policy.h \
            src/Quirks.h src/Stats.h \
-           src/SettingsUI.h src/SettingsWindow.h src/WindowFinder.h
+           src/SettingsUI.h src/SettingsWindow.h src/WindowFinder.h src/WindowPin.h
 OBJECTS := $(patsubst src/%.mm,build/%.o,$(SOURCES))
 
 VERSION := $(shell /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Info.plist)

@@ -112,6 +112,7 @@ comments, ordering and any settings a future version adds are left alone.
     toggleShortcut=control-option-J   # pause and resume from anywhere
     raiseShortcut=control-option-R    # raise the outlined window
     returnShortcut=control-option-B   # back to the window you came from
+    pinShortcut=control-option-P      # keep the window under the pointer on top
 
 The same names work as arguments, and `-key value` and `-key=value` are both accepted:
 
@@ -282,6 +283,35 @@ them, AutoRaise says so at startup and raises windows instead, rather than faili
 [Which macOS versions](#which-macos-versions). It used to require a separate build with
 `EXPERIMENTAL_FOCUS_FIRST`; now it is just a setting.
 
+### Keeping a window on top
+
+`pinShortcut` pins the window under the pointer so nothing covers it: a video, a terminal, the notes
+for the call you are on. Press it again over the window to let go, or right-click the window and
+choose Unpin. The menu bar lists every pinned window with a way to let go of it.
+
+macOS does not let one application change the level of another application's window, so AutoRaise
+cannot lift the real window. Whenever something comes in front of a pinned window, AutoRaise shows a
+live copy of it in a floating panel of its own, exactly where the window is. ScreenCaptureKit draws
+the copy at the display's full resolution and redraws it whenever the window changes, so typing and
+video show through.
+
+AutoRaise makes the copy behave like the window where it can:
+
+- Hovering the copy hovers the real window. With `mode=focus` you can type into a pinned window
+  that is behind something else and watch the copy update.
+- Clicking the copy brings the real window forward. The copy then has nothing to cover and steps
+  aside, so the next click lands in the window itself. A picture cannot pass a click on, so that
+  first click is spent on bringing the window forward.
+- Sheets and pop-ups that belong to the pinned window stay in front of it while you use it.
+- The copy follows the window when it moves or is resized. A window that is minimised, hidden or on
+  another desktop takes its copy along and gets it back when it returns. Closing the window unpins
+  it.
+
+Pinning needs the Screen Recording permission. The first time, AutoRaise asks for it and opens the
+page in System Settings; macOS may want AutoRaise reopened before the permission takes effect.
+macOS 15 and later also ask every so often whether AutoRaise should keep it. Pins last until
+AutoRaise quits.
+
 ### One gesture, one result
 
 Hovering a window hands it the keyboard, whatever else is on screen:
@@ -410,6 +440,8 @@ Other things worth checking:
   wine.
 - Does the wrong window raise? Try `windowServerHitTest=false` to use the accessibility API for hit
   testing instead, and please report it.
+- Does pinning do nothing? AutoRaise needs Screen Recording as well as Accessibility for it. Check
+  System Settings, Privacy & Security, Screen & System Audio Recording, then reopen AutoRaise.
 
 Accessibility permission is tied to the code signature. Signed builds keep the permission across
 updates. If you build unsigned copies yourself and macOS keeps forgetting the grant, remove the stale
@@ -464,6 +496,7 @@ accessibility again.
     src/Config.mm        settings, from defaults through file to arguments
     src/Quirks.mm        per app knowledge, built in and user supplied
     src/DialogWatcher.mm notices a dialog appearing, so the pointer can meet it
+    src/WindowPin.mm     pinned windows and the live copies that keep them on top
     src/Inspector.mm     the panel that says which rule decided
     src/MenuBar.mm       the status item
     src/SettingsWindow.mm  the settings window and its six pages

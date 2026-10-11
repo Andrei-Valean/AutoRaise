@@ -291,6 +291,11 @@ BOOL ARFocusRingVerbose = NO;
 
     BOOL wasVisible = _panel.isVisible;
     _windowId = windowId;
+    // Pinned windows show as copies one level up; a ring that is not clipped
+    // to a window goes above those too, or the copy of the very window it
+    // marks would hide it.
+    _panel.level = windowId == kCGNullWindowID ? NSFloatingWindowLevel + 2
+                                               : NSFloatingWindowLevel;
     [self refreshClip];
     if (!wasVisible) {
         [_panel orderFront: nil];

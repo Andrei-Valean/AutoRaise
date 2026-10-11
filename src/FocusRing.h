@@ -28,7 +28,8 @@ extern BOOL ARFocusRingVerbose;
 // frame is the window frame in CoreGraphics coordinates, the same ones the
 // accessibility API reports. windowId is the window being outlined: the ring is
 // placed directly above it in the stacking order, so anything in front of that
-// window covers the ring too. Pass kCGNullWindowID to float above everything.
+// window covers the ring too. Pass kCGNullWindowID to float above everything,
+// the copies of pinned windows included.
 - (void)showAroundFrame:(CGRect)frame ofWindow:(CGWindowID)windowId;
 - (void)hide;
 

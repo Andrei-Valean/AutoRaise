@@ -96,6 +96,28 @@
         [menu addItem: login];
     }
 
+    // Pinned windows are listed so there is a way to let go of one without
+    // finding it, or the shortcut, again.
+    NSArray<NSString *> *pinned = delegate.pinnedWindowNames;
+    if (pinned.count) {
+        [menu addItem: [NSMenuItem separatorItem]];
+        [menu addItem: [NSMenuItem sectionHeaderWithTitle: @"Kept on Top"]];
+        [pinned enumerateObjectsUsingBlock: ^(NSString *name, NSUInteger index, BOOL *stop) {
+            NSMenuItem *unpin = [[NSMenuItem alloc]
+                initWithTitle: [NSString stringWithFormat: @"Unpin %@", name]
+                action: @selector(unpinWindow:) keyEquivalent: @""];
+            unpin.target = self;
+            unpin.tag = (NSInteger) index;
+            [menu addItem: unpin];
+        }];
+        if (pinned.count > 1) {
+            NSMenuItem *all = [[NSMenuItem alloc] initWithTitle: @"Unpin All"
+                action: @selector(unpinAllWindows:) keyEquivalent: @""];
+            all.target = self;
+            [menu addItem: all];
+        }
+    }
+
     [menu addItem: [NSMenuItem separatorItem]];
 
     NSMenuItem *settings = [[NSMenuItem alloc] initWithTitle: @"Settings…"
@@ -139,6 +161,14 @@
 
 - (void)toggleInspector:(id)sender {
     [self.delegate toggleInspector];
+}
+
+- (void)unpinWindow:(NSMenuItem *)sender {
+    [self.delegate unpinWindowAtIndex: (NSUInteger) sender.tag];
+}
+
+- (void)unpinAllWindows:(id)sender {
+    [self.delegate unpinAllWindows];
 }
 
 - (void)openAccessibilitySettings:(id)sender {

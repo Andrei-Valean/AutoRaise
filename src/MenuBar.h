@@ -28,6 +28,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)loginItemAvailable;
 - (BOOL)loginItemEnabled;
 - (void)setLoginItemEnabled:(BOOL)enabled;
+// Windows kept above everything else, by name, and letting go of them.
+- (NSArray<NSString *> *)pinnedWindowNames;
+- (void)unpinWindowAtIndex:(NSUInteger)index;
+- (void)unpinAllWindows;
 @end
 
 @interface ARMenuBar : NSObject
